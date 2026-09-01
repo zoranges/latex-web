@@ -1051,6 +1051,105 @@ async function showDiff(sha) {
 }
 
 /* ================= 事件绑定 ================= */
+/* ================= AI 排版 ================= */
+/* 两阶段：analyze 返回排版方案（diff 预览）→ 用户确认 → apply 写盘 + 编译自愈 */
+const AI = { content: null, path: null };
+
+function renderAiDiff(diff) {
+  const html = escapeHtml(diff || "(无差异)").split("\n").map((ln) => {
+    if (ln.startsWith("+")) return `<span class="diff-add">${ln}</span>`;
+    if (ln.startsWith("-")) return `<span class="diff-del">${ln}</span>`;
+    if (ln.startsWith("@@")) return `<span class="diff-hunk">${ln}</span>`;
+    return ln;
+  }).join("\n");
+  $("#ai-diff").innerHTML = html;
+}
+
+function closeAiModal() {
+  $("#ai-modal").hidden = true;
+  $("#btn-ai-apply").disabled = false;
+  AI.content = null;
+}
+
+async function aiAnalyze() {
+  if (!S.slug || !S.currentFile) { toast("请先打开项目中的文件"); return; }
+  if (!S.currentFile.endsWith(".tex")) { toast("AI 排版目前仅支持 .tex 文件"); return; }
+  if (S.dirty) await saveNow(); // 确保 AI 读到最新内容
+  const btn = $("#btn-ai");
+  setBusy(btn, true);
+  setStatus("AI 正在分析排版…", "busy");
+  try {
+    const r = await api(`/api/projects/${S.slug}/ai/analyze`, json("POST", { path: S.currentFile }));
+    if (!r.changed) {
+      setStatus("已分析");
+      toast("AI 认为排版已良好：" + r.summary);
+      return;
+    }
+    AI.content = r.content;
+    AI.path = S.currentFile;
+    $("#ai-summary").textContent = r.summary;
+    renderAiDiff(r.diff);
+    $("#ai-status").textContent = "";
+    $("#ai-status").className = "status";
+    $("#btn-ai-apply").disabled = false;
+    $("#ai-modal").hidden = false;
+    setStatus("等待确认 AI 排版方案");
+  } catch (e) {
+    setStatus("AI 分析失败: " + e.message, "error");
+    toast(e.message);
+  } finally {
+    setBusy(btn, false);
+  }
+}
+
+async function aiApply() {
+  if (!S.slug || !AI.content) return;
+  const btn = $("#btn-ai-apply");
+  btn.disabled = true;
+  setBusy(btn, true);
+  const st = $("#ai-status");
+  st.textContent = "正在应用并编译…（编译失败会自动修复重试）";
+  st.className = "status busy";
+  try {
+    const r = await api(`/api/projects/${S.slug}/ai/apply`,
+      json("POST", { path: AI.path, content: AI.content, compile: true }));
+    // 重新加载最终内容（自愈/回滚后可能与提案内容不同）
+    const { content } = await api(
+      `/api/projects/${S.slug}/file?path=${encodeURIComponent(AI.path)}`
+    );
+    S.loadingFile = true;
+    S.editor.setValue(content);
+    S.loadingFile = false;
+    S.dirty = 0;
+    updateCount();
+
+    if (r.compile_unavailable) {
+      st.textContent = "已应用。本机无法编译（未装 TeX Live），部署到服务器后请验证";
+      st.className = "status";
+      toast("AI 排版已应用（未编译）");
+    } else if (r.success) {
+      toast("AI 排版完成");
+      $("#ai-modal").hidden = true;
+      AI.content = null;
+      applyErrorMarkers([]);
+      showPdfOverlay("正在加载 PDF…");
+      try { await loadPdf(); } finally { hidePdfOverlay(); }
+      setStatus(r.rounds.length > 1
+        ? `AI 排版完成 · 含 ${r.rounds.length - 1} 轮自动修复`
+        : "AI 排版完成 · 编译一次通过");
+    } else if (r.rolled_back) {
+      st.textContent = "无法自动修复编译错误，已回滚到 AI 排版前的版本（详见「历史」）";
+      st.className = "status error";
+      toast("AI 排版失败，已回滚");
+    }
+  } catch (e) {
+    st.textContent = "应用失败: " + e.message;
+    st.className = "status error";
+  } finally {
+    setBusy(btn, false);
+  }
+}
+
 function bindEvents() {
   $("#btn-compile").onclick = compile;
   $("#btn-sync").onclick = forwardSync;
@@ -1063,6 +1162,15 @@ function bindEvents() {
   $("#sb-errors").onclick = gotoNextError;
   $("#history-modal").onclick = (e) => {
     if (e.target === $("#history-modal")) $("#history-modal").hidden = true;
+  };
+
+  /* AI 排版 */
+  $("#btn-ai").onclick = aiAnalyze;
+  $("#btn-ai-cancel").onclick = closeAiModal;
+  $("#btn-ai-close").onclick = closeAiModal;
+  $("#btn-ai-apply").onclick = aiApply;
+  $("#ai-modal").onclick = (e) => {
+    if (e.target === $("#ai-modal")) closeAiModal();
   };
 
   $("#btn-new-project").onclick = openTemplateModal;

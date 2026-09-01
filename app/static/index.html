@@ -30,6 +30,7 @@
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+  <symbol id="i-wand" viewBox="0 0 24 24"><path d="M3 21l8.5-8.5"/><path d="M12.2 6.2L11 5l1.2-1.2M17.6 11.8L19 13l-1.2 1.2M13.5 3.5L14 2l1.5.5M19 9l2-.5-1.5-1.5"/><path d="M14.5 9.5l4-4a1.4 1.4 0 0 1 2 2l-4 4z"/></symbol>
 </svg>
 
 <header>
@@ -45,6 +46,7 @@
     </div>
     <label class="auto-label"><input type="checkbox" id="auto-compile" checked><span class="lbl">自动编译</span></label>
     <button id="btn-compile" class="btn primary" title="编译 (Ctrl+Enter)"><svg class="icon solid"><use href="#i-play"/></svg><span class="lbl">编译</span></button>
+    <button id="btn-ai" class="btn" title="AI 排版：分析并修正当前文件的排版（需配置模型 API Key）"><svg class="icon"><use href="#i-wand"/></svg><span class="lbl">AI排版</span></button>
     <button id="btn-sync" class="btn" title="把光标所在行定位到 PDF（SyncTeX 正向）"><svg class="icon"><use href="#i-sync"/></svg><span class="lbl">定位</span></button>
     <button id="btn-download" class="btn" title="下载 PDF"><svg class="icon"><use href="#i-download"/></svg><span class="lbl">PDF</span></button>
     <button id="btn-history" class="btn" title="版本历史（每次保存自动记录）"><svg class="icon"><use href="#i-clock"/></svg><span class="lbl">历史</span></button>
@@ -139,6 +141,25 @@
       <div class="tpl-footer">
         <button id="btn-template-create" class="btn primary">创建项目</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="ai-modal" hidden>
+  <div class="modal-box">
+    <div class="drawer-head">
+      <span>AI 排版</span>
+      <button id="btn-ai-close" class="mini-btn"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="ai-body">
+      <div id="ai-summary" class="ai-summary"></div>
+      <pre id="ai-diff"></pre>
+    </div>
+    <div class="tpl-footer">
+      <span id="ai-status" class="status"></span>
+      <span class="sb-spacer"></span>
+      <button id="btn-ai-cancel" class="btn">取消</button>
+      <button id="btn-ai-apply" class="btn primary">应用排版并编译</button>
     </div>
   </div>
 </div>

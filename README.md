@@ -8,6 +8,7 @@
 - **自动编译** — 保存后自动运行 `latexmk -xelatex -synctex=1`，0.5~2 秒出 PDF
 - **SyncTeX 双向定位** — 点击 PDF 跳转到源码行；编辑器光标定位到 PDF 位置
 - **Git 版本历史** — 每次保存自动 commit，可查看 diff 并一键恢复任意版本
+- **AI 排版** — 大模型分析并修正排版（两阶段：diff 预览确认 → 应用 + 编译自愈，失败自动回滚）
 - **文件上传** — 上传图片等资源到项目目录
 - **内置模板** — 新建项目时可选 6 种模板（见下）
 - **中文支持** — 使用 ctex/xeCJK + 系统字体，开箱即用
@@ -49,6 +50,32 @@ bash run.sh
 |---|---|
 | `PORT` | `8090` |
 | `HOST` | `0.0.0.0` |
+
+## AI 排版
+
+工具栏「AI排版」按钮：对当前打开的 `.tex` 文件，让大模型分析排版问题并给出修正。两阶段流程：
+
+1. **分析** — 模型返回排版说明 + 修改后全文，界面展示 unified diff，由你确认
+2. **应用** — 写入（自动 git 提交）→ 编译；编译失败会把错误日志喂回模型自动修复（最多 2 轮）；仍失败则自动回滚到 AI 修改前的版本
+
+未配置模型 Key 时「AI排版」会提示配置。配置方式（环境变量，或把 Key 写入 `data/ai_key` 文件）：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `DEEPSEEK_API_KEY`（或 `AI_API_KEY`） | — | 模型 API Key |
+| `AI_BASE_URL`（或 `DEEPSEEK_BASE_URL`） | `https://api.deepseek.com` | OpenAI 兼容端点 |
+| `AI_MODEL`（或 `DEEPSEEK_MODEL`） | `deepseek-chat` | 模型名 |
+
+示例：
+
+```bash
+export DEEPSEEK_API_KEY=***
+# 或者换用其它 OpenAI 兼容服务（如阿里云 DashScope）：
+# export AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+# export AI_MODEL=qwen-plus
+```
+
+也可用本地模型网关（如 ollama 的 OpenAI 兼容端点）：`AI_BASE_URL` 指向回环地址时会自动绕过系统代理直连。
 
 ## 配置 systemd 开机自启
 
@@ -106,6 +133,9 @@ data/
 | GET | `/api/projects/{slug}/pdf` | PDF 预览 |
 | POST | `/api/projects/{slug}/sync-forward` | SyncTeX 正向 `{file,line,col}` |
 | POST | `/api/projects/{slug}/sync-backward` | SyncTeX 反向 `{page,x,y}` |
+| GET | `/api/ai/config` | AI 服务配置状态（是否已配置、模型名） |
+| POST | `/api/projects/{slug}/ai/analyze` | AI 排版阶段 1：分析 `{path}`，返回 summary/新内容/diff（不写盘） |
+| POST | `/api/projects/{slug}/ai/apply` | AI 排版阶段 2：应用 `{path, content, compile}`，编译自愈失败自动回滚 |
 | GET | `/api/projects/{slug}/history` | 提交列表 |
 | GET | `/api/projects/{slug}/history/{sha}` | 提交 diff |
 | POST | `/api/projects/{slug}/history/{sha}/restore` | 恢复版本 |

@@ -1,6 +1,7 @@
 """项目与文件存储：文件系统 + git 版本控制 + SQLite 元数据。"""
 from __future__ import annotations
 
+import os
 import re
 import secrets
 import shutil
@@ -44,7 +45,8 @@ def _connect() -> sqlite3.Connection:
 
 def _git(proj: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", *args], cwd=proj, capture_output=True, text=True, check=check
+        ["git", *args], cwd=proj, capture_output=True, text=True, check=check,
+        encoding="utf-8", errors="replace",  # git 输出按 UTF-8 解码，避免 GBK  locale 下中文提交信息解码崩溃
     )
 
 
@@ -147,9 +149,20 @@ def create_project(name: str, template_id: str = "article") -> dict:
     return {"slug": slug, "name": name.strip(), "main_file": main_file, "created_at": now}
 
 
+def _rm_readonly(func, path, exc_info):
+    """Windows 上 git 对象文件是只读的，清除只读属性后重试删除。"""
+    import stat
+
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except OSError:
+        pass
+
+
 def delete_project(slug: str) -> None:
     _proj_dir(slug)  # 校验存在
-    shutil.rmtree(PROJECTS_DIR / slug)
+    shutil.rmtree(PROJECTS_DIR / slug, onerror=_rm_readonly)
     conn = _connect()
     try:
         conn.execute("DELETE FROM projects WHERE slug = ?", (slug,))

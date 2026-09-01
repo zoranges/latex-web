@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import ai as ai_mod
 from . import compile as compile_mod
 from . import storage
 
@@ -73,6 +74,16 @@ class SyncBackwardBody(BaseModel):
 
 class FormatBody(BaseModel):
     content: str
+
+
+class AIAnalyzeBody(BaseModel):
+    path: str
+
+
+class AIApplyBody(BaseModel):
+    path: str
+    content: str
+    compile: bool = True
 
 
 def _err(e: Exception) -> HTTPException:
@@ -282,6 +293,40 @@ async def api_format(slug: str, body: FormatBody):
     except RuntimeError as e:
         raise HTTPException(400, str(e))
     return {"content": formatted}
+
+
+# ---------- AI 排版 ----------
+
+@app.get("/api/ai/config")
+def api_ai_config():
+    """AI 服务配置状态（不含 Key 本身）。"""
+    return ai_mod.describe()
+
+
+@app.post("/api/projects/{slug}/ai/analyze")
+async def api_ai_analyze(slug: str, body: AIAnalyzeBody):
+    """阶段 1：分析文件排版问题，返回说明 + 新内容 + diff（不写盘）。"""
+    try:
+        return await ai_mod.analyze(slug, body.path)
+    except ai_mod.AIError as e:
+        raise HTTPException(400, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise _err(e)
+
+
+@app.post("/api/projects/{slug}/ai/apply")
+async def api_ai_apply(slug: str, body: AIApplyBody):
+    """阶段 2：应用排版结果（自动提交 + 编译自愈，失败回滚）。"""
+    try:
+        return await ai_mod.apply(slug, body.path, body.content, body.compile)
+    except ai_mod.AIError as e:
+        raise HTTPException(400, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise _err(e)
 
 
 # ---------- 历史版本 ----------

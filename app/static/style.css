@@ -617,6 +617,52 @@ aside {
   color: var(--text-dim);
 }
 
+/* ---------- AI 排版弹窗 ---------- */
+#ai-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.38);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+#ai-modal[hidden] { display: none; }
+#ai-modal .modal-box { width: min(900px, 90%); height: auto; max-height: 86%; }
+.ai-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.ai-summary {
+  padding: 12px 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  white-space: pre-wrap;
+}
+#ai-diff {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-dim);
+  min-height: 200px;
+}
+#ai-diff .diff-add { color: #1a7f37; background: rgba(46, 160, 67, 0.12); }
+#ai-diff .diff-del { color: #cf222e; background: rgba(248, 81, 73, 0.12); }
+#ai-diff .diff-hunk { color: var(--accent); }
+#ai-modal .tpl-footer {
+  gap: 10px;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+}
+#ai-modal .sb-spacer { flex: 1; }
+#ai-status { font-size: 12px; }
+
 /* ---------- 模板选择弹窗 ---------- */
 #template-modal {
   position: fixed;

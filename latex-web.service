@@ -1,0 +1,16 @@
+[Unit]
+Description=LaTeX Web — 轻量 LaTeX 在线编辑器
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/latex
+Environment="PORT=8090"
+Environment="HOST=0.0.0.0"
+ExecStart=/root/latex/.venv/bin/uvicorn app.main:app --app-dir /root/latex --host 0.0.0.0 --port 8090
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

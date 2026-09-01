@@ -1,0 +1,10 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime data (user projects, meta.db — auto-created)
+data/
+
+# Claude Code local config
+.claude/

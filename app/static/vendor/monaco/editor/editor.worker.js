@@ -1,0 +1,1 @@
+Couldn't find the requested file /min/vs/editor/editor.worker.js in monaco-editor.

@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>LaTeX Web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%232f6fdb'/%3E%3Ctext x='12' y='17' font-size='13' font-family='monospace' fill='%23fff' text-anchor='middle'%3ET%3C/text%3E%3C/svg%3E">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/vendor/monaco/editor/editor.main.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="view-edit">
+
+<!-- SVG 图标库（Feather 风格，线性图标） -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" class="solid"/></symbol>
+  <symbol id="i-sync" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10"/><path d="M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></symbol>
+  <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6M8 11h6"/></symbol>
+  <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/><path d="M8 11h6"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+</svg>
+
+<header>
+  <div class="header-left">
+    <button id="btn-menu" class="btn icon-only" title="项目 / 文件"><svg class="icon"><use href="#i-menu"/></svg></button>
+    <span class="logo"><span class="logo-mark">T<sub>E</sub>X</span>LaTeX Web</span>
+    <span id="project-name" class="project-name">未选择项目</span>
+  </div>
+  <div class="header-actions">
+    <div id="view-toggle">
+      <button id="view-edit" class="vt active">编辑</button>
+      <button id="view-pdf" class="vt">预览</button>
+    </div>
+    <label class="auto-label"><input type="checkbox" id="auto-compile" checked><span class="lbl">自动编译</span></label>
+    <button id="btn-compile" class="btn primary" title="编译 (Ctrl+Enter)"><svg class="icon solid"><use href="#i-play"/></svg><span class="lbl">编译</span></button>
+    <button id="btn-sync" class="btn" title="把光标所在行定位到 PDF（SyncTeX 正向）"><svg class="icon"><use href="#i-sync"/></svg><span class="lbl">定位</span></button>
+    <button id="btn-download" class="btn" title="下载 PDF"><svg class="icon"><use href="#i-download"/></svg><span class="lbl">PDF</span></button>
+    <button id="btn-history" class="btn" title="版本历史（每次保存自动记录）"><svg class="icon"><use href="#i-clock"/></svg><span class="lbl">历史</span></button>
+    <span id="status" class="status"></span>
+  </div>
+</header>
+<div id="drawer-overlay" hidden></div>
+
+<div class="main">
+  <aside>
+    <div class="side-section">
+      <div class="side-title">项目 <button id="btn-new-project" class="mini-btn" title="新建项目"><svg class="icon"><use href="#i-plus"/></svg></button></div>
+      <ul id="project-list"></ul>
+    </div>
+    <div class="side-section grow">
+      <div class="side-title">
+        文件
+        <span class="side-actions">
+          <button id="btn-new-file" class="mini-btn" title="新建文件"><svg class="icon"><use href="#i-plus"/></svg></button>
+          <button id="btn-upload" class="mini-btn" title="上传文件"><svg class="icon"><use href="#i-upload"/></svg></button>
+        </span>
+      </div>
+      <ul id="file-tree"></ul>
+    </div>
+  </aside>
+
+  <div id="editor-host"></div>
+  <div id="resizer" title="拖拽调整分栏"></div>
+
+  <div class="pdf-pane">
+    <div class="pdf-toolbar">
+      <button id="pdf-prev" class="mini-btn" title="上一页 (PageUp)"><svg class="icon"><use href="#i-chev-left"/></svg></button>
+      <span id="pdf-page-info">0 / 0</span>
+      <button id="pdf-next" class="mini-btn" title="下一页 (PageDown)"><svg class="icon"><use href="#i-chev-right"/></svg></button>
+      <span class="sep"></span>
+      <button id="pdf-zoom-out" class="mini-btn" title="缩小 (Ctrl+-)"><svg class="icon"><use href="#i-zoom-out"/></svg></button>
+      <button id="pdf-zoom-in" class="mini-btn" title="放大 (Ctrl++)"><svg class="icon"><use href="#i-zoom-in"/></svg></button>
+      <button id="pdf-fit" class="mini-btn" title="适应宽度 (Ctrl+0)"><svg class="icon"><use href="#i-fit"/></svg></button>
+      <button id="btn-sync-scroll" class="mini-btn tgl" title="编辑器滚动时联动 PDF"><svg class="icon"><use href="#i-sync"/></svg></button>
+    </div>
+    <div id="pdf-scroll">
+      <div id="pdf-pages"></div>
+      <div id="pdf-marker" hidden></div>
+      <div id="pdf-overlay" hidden><span class="spinner big"></span><span id="pdf-overlay-text"></span></div>
+      <div id="pdf-hint">尚无 PDF — 点击「编译」生成。<br>编译成功后点击 PDF 任意位置可跳转到源码（SyncTeX）。</div>
+    </div>
+  </div>
+</div>
+
+<footer id="statusbar">
+  <span class="sb-item" id="sb-pos">Ln 1, Col 1</span>
+  <span class="sb-item" id="sb-count">0 字符</span>
+  <button class="sb-item sb-err" id="sb-errors" hidden title="下一个错误 (F8)"></button>
+  <span class="sb-item" id="sb-file"></span>
+  <span class="sb-spacer"></span>
+  <span class="sb-item sb-accent">XeLaTeX · TeX Live 2025</span>
+</footer>
+
+<div id="log-drawer" hidden>
+  <div class="drawer-head">
+    <span>编译日志</span>
+    <button id="btn-log-close" class="mini-btn"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+  <pre id="log-content"></pre>
+</div>
+
+<div id="history-modal" hidden>
+  <div class="modal-box">
+    <div class="drawer-head">
+      <span>版本历史</span>
+      <button id="btn-history-close" class="mini-btn"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="history-body">
+      <ul id="history-list"></ul>
+      <pre id="diff-view">选择左侧的提交查看变更</pre>
+    </div>
+  </div>
+</div>
+
+<div id="template-modal" hidden>
+  <div class="modal-box tpl-box">
+    <div class="drawer-head">
+      <span>新建项目 — 选择模板</span>
+      <button id="btn-template-close" class="mini-btn"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="tpl-body">
+      <div class="tpl-name-row">
+        <label for="tpl-name">项目名称</label>
+        <input id="tpl-name" type="text" placeholder="输入项目名称" maxlength="60">
+      </div>
+      <div id="tpl-grid" class="tpl-grid"></div>
+      <div class="tpl-footer">
+        <button id="btn-template-create" class="btn primary">创建项目</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="quick-switch" hidden>
+  <div class="qs-box">
+    <input id="qs-input" type="text" placeholder="输入文件名，回车打开…  (Esc 关闭)" autocomplete="off">
+    <ul id="qs-list"></ul>
+  </div>
+</div>
+
+<div id="toast"></div>
+<input type="file" id="upload-input" hidden>
+
+<script src="/static/vendor/monaco/loader.js"></script>
+<script src="/static/vendor/pdfjs/pdf.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

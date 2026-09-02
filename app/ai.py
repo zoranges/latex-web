@@ -135,6 +135,47 @@ def _parse_json(raw: str) -> dict:
     return data
 
 
+# AI 偶尔会把自然段写成“· 内容”或“• 内容”。这些符号不属于论文排版，
+# 只清理行首的分行标记，不触碰正文中可能有实际语义的普通字符。
+_LINE_START_DOT = re.compile(r"^([ \t]*)(?:·|•|●|▪|‧|∙|⋅)[ \t]*")
+
+
+def _remove_ai_line_markers(content: str) -> tuple[str, int]:
+    """移除 AI 在论文源文件中生成的行首圆点分行符。"""
+    lines = content.splitlines()
+    cleaned: list[str] = []
+    removed = 0
+    list_depth = 0
+    for line in lines:
+        match = _LINE_START_DOT.match(line)
+        if match:
+            removed += 1
+            text = line[match.end():]
+            if list_depth:
+                # 如果模型已经放在列表环境中，恢复为合法的 LaTeX 列表项。
+                line = match.group(1) + r"\item " + text
+            else:
+                # 把被圆点切开的行恢复成独立自然段，避免只删符号后仍挤在同一段中。
+                if cleaned and cleaned[-1].strip():
+                    cleaned.append("")
+                line = match.group(1) + text
+        cleaned.append(line)
+
+        begins = re.findall(r"\\begin\{(?:itemize|enumerate|description)\}", line)
+        ends = re.findall(r"\\end\{(?:itemize|enumerate|description)\}", line)
+        list_depth = max(0, list_depth + len(begins) - len(ends))
+    result = "\n".join(cleaned)
+    if content.endswith("\n"):
+        result += "\n"
+    return result, removed
+
+
+def _append_cleanup_notice(summary: str, removed: int) -> str:
+    if not removed:
+        return summary
+    return f"{summary}；已自动移除 {removed} 处 AI 生成的行首圆点分行符"
+
+
 # ---------- 排版标准（style profile） ----------
 
 STYLE_GENERAL = "general"
@@ -312,6 +353,8 @@ async def analyze(
         raise AIError("模型返回缺少有效的 content 字段")
 
     summary = str(data.get("summary") or "").strip() or "（模型未给出说明）"
+    new_content, removed_markers = _remove_ai_line_markers(new_content)
+    summary = _append_cleanup_notice(summary, removed_markers)
 
     if selection:
         start, end = selection
@@ -389,6 +432,7 @@ async def _repair(content: str, errors: str) -> str | None:
         data = _parse_json(raw)
         fixed = data.get("content")
         if isinstance(fixed, str) and fixed.strip():
+            fixed, _ = _remove_ai_line_markers(fixed)
             return fixed if fixed.endswith("\n") else fixed + "\n"
     except AIError:
         pass
@@ -407,6 +451,8 @@ async def _apply_content(slug: str, path: str, new_content: str,
     proj = storage._proj_dir(slug)
     pre_sha = _git_head(proj)
 
+    # 最后一层保护：即使用户编辑了预览内容，也不把行首圆点分行写入论文。
+    new_content, _ = _remove_ai_line_markers(new_content)
     storage.write_file(slug, path, new_content)  # 自动 git 提交
     base = {"applied": True, "mode": mode}
     if not do_compile:

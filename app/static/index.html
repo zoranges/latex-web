@@ -156,14 +156,20 @@
       <button id="btn-ai-close" class="mini-btn"><svg class="icon"><use href="#i-x"/></svg></button>
     </div>
     <div class="ai-body">
-      <div id="ai-summary" class="ai-summary"></div>
+      <div class="ai-prep">
+        <div id="ai-scope" class="ai-scope"></div>
+        <input id="ai-instruction" type="text" maxlength="500"
+               placeholder="排版要求（可选）：如「改成三线表」「公式居中编号」，可反复调整重新分析">
+      </div>
+      <div id="ai-summary" class="ai-summary" hidden></div>
       <pre id="ai-diff"></pre>
     </div>
     <div class="tpl-footer">
       <span id="ai-status" class="status"></span>
       <span class="sb-spacer"></span>
       <button id="btn-ai-cancel" class="btn">取消</button>
-      <button id="btn-ai-apply" class="btn primary">应用排版并编译</button>
+      <button id="btn-ai-run" class="btn primary">开始分析</button>
+      <button id="btn-ai-apply" class="btn primary" hidden>应用排版并编译</button>
     </div>
   </div>
 </div>

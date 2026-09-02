@@ -642,6 +642,26 @@ aside {
 #ai-modal[hidden] { display: none; }
 #ai-modal .modal-box { width: min(900px, 90%); height: auto; max-height: 86%; }
 .ai-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.ai-prep {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-scope { font-size: 12px; color: var(--text-dim); }
+.ai-scope b { color: var(--accent); font-weight: 600; }
+#ai-instruction {
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+#ai-instruction:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .ai-summary {
   padding: 12px 16px;
   font-size: 13px;

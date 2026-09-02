@@ -1052,8 +1052,12 @@ async function showDiff(sha) {
 
 /* ================= 事件绑定 ================= */
 /* ================= AI 排版 ================= */
-/* 两阶段：analyze 返回排版方案（diff 预览）→ 用户确认 → apply 写盘 + 编译自愈 */
-const AI = { content: null, path: null };
+/* 全文 / 选区（定位修正）两种模式；指令可交互迭代
+   analyze 返回方案（diff 预览）→ 用户确认 → apply 写盘 + 编译自愈 */
+const AI = {
+  content: null, path: null, mode: "full",
+  start: 0, end: 0, original: null, analyzed: false,
+};
 
 function renderAiDiff(diff) {
   const html = escapeHtml(diff || "(无差异)").split("\n").map((ln) => {
@@ -1067,43 +1071,98 @@ function renderAiDiff(diff) {
 
 function closeAiModal() {
   $("#ai-modal").hidden = true;
-  $("#btn-ai-apply").disabled = false;
-  AI.content = null;
+  Object.assign(AI, { content: null, original: null, analyzed: false });
 }
 
-async function aiAnalyze() {
+/* 打开弹窗：编辑器有选区 → 定位修正（选区）模式，否则全文模式 */
+function openAiModal() {
   if (!S.slug || !S.currentFile) { toast("请先打开项目中的文件"); return; }
   if (!S.currentFile.endsWith(".tex")) { toast("AI 排版目前仅支持 .tex 文件"); return; }
-  if (S.dirty) await saveNow(); // 确保 AI 读到最新内容
-  const style = $("#ai-style").value;
-  const btn = $("#btn-ai");
+  let start = 0, end = 0;
+  if (S.editor.getSelection) {
+    const sel = S.editor.getSelection();
+    if (sel && !sel.isEmpty()) {
+      start = Math.min(sel.startLineNumber, sel.endLineNumber);
+      end = Math.max(sel.startLineNumber, sel.endLineNumber);
+    }
+  }
+  AI.mode = start ? "selection" : "full";
+  AI.start = start;
+  AI.end = end;
+  AI.path = S.currentFile;
+  AI.content = null;
+  AI.original = null;
+  AI.analyzed = false;
+  $("#ai-scope").innerHTML = AI.mode === "selection"
+    ? `目标：<b>选中区域 第 ${start}–${end} 行</b>（只修改该区域，其余部分不动）`
+    : "目标：<b>整个文件</b>";
+  $("#ai-instruction").value = "";
+  $("#ai-summary").hidden = true;
+  $("#ai-summary").textContent = "";
+  $("#ai-diff").textContent = "输入排版要求（可选），点击「开始分析」";
+  $("#ai-status").textContent = "";
+  $("#ai-status").className = "status";
+  const run = $("#btn-ai-run");
+  run.hidden = false;
+  run.disabled = false;
+  run.textContent = "开始分析";
+  $("#btn-ai-apply").hidden = true;
+  $("#btn-ai-apply").disabled = false;
+  $("#ai-modal").hidden = false;
+  $("#ai-instruction").focus();
+}
+
+/* 阶段 1：分析（可反复执行，每次携带最新指令） */
+async function aiRun() {
+  if (!S.slug || !AI.path) return;
+  const btn = $("#btn-ai-run");
+  const st = $("#ai-status");
+  btn.disabled = true;
   setBusy(btn, true);
-  setStatus("AI 正在分析排版…", "busy");
+  st.textContent = AI.mode === "selection" ? "AI 正在分析选中区域…" : "AI 正在分析排版…";
+  st.className = "status busy";
+  if (S.dirty) await saveNow(); // 确保 AI 读到最新内容
+  const body = {
+    path: AI.path,
+    style: $("#ai-style").value,
+    instruction: $("#ai-instruction").value.trim(),
+  };
+  if (AI.mode === "selection") {
+    body.start_line = AI.start;
+    body.end_line = AI.end;
+    // 选区原文快照：应用时做错位保护
+    AI.original = S.editor.getValue().split("\n").slice(AI.start - 1, AI.end).join("\n");
+  }
   try {
-    const r = await api(`/api/projects/${S.slug}/ai/analyze`,
-      json("POST", { path: S.currentFile, style }));
+    const r = await api(`/api/projects/${S.slug}/ai/analyze`, json("POST", body));
     if (!r.changed) {
-      setStatus("已分析");
-      toast("AI 认为排版已良好：" + r.summary);
+      st.textContent = "无需修改：" + r.summary;
+      st.className = "status";
       return;
     }
     AI.content = r.content;
-    AI.path = S.currentFile;
-    $("#ai-summary").textContent = `【${r.style_name || style}】${r.summary}`;
+    AI.analyzed = true;
+    const scope = r.mode === "selection"
+      ? `【${r.style_name} · 第${r.start_line}–${r.end_line}行】`
+      : `【${r.style_name}】`;
+    $("#ai-summary").textContent = scope + r.summary;
+    $("#ai-summary").hidden = false;
     renderAiDiff(r.diff);
-    $("#ai-status").textContent = "";
-    $("#ai-status").className = "status";
+    $("#btn-ai-apply").hidden = false;
     $("#btn-ai-apply").disabled = false;
-    $("#ai-modal").hidden = false;
-    setStatus(`等待确认 AI 排版方案 · ${r.style_name || style}`);
+    btn.textContent = "重新分析";
+    st.textContent = "请确认方案；可修改排版要求后重新分析";
+    st.className = "status";
   } catch (e) {
-    setStatus("AI 分析失败: " + e.message, "error");
-    toast(e.message);
+    st.textContent = "分析失败: " + e.message;
+    st.className = "status error";
   } finally {
+    btn.disabled = false;
     setBusy(btn, false);
   }
 }
 
+/* 阶段 2：应用（选区模式带错位保护）+ 编译自愈 */
 async function aiApply() {
   if (!S.slug || !AI.content) return;
   const btn = $("#btn-ai-apply");
@@ -1113,8 +1172,13 @@ async function aiApply() {
   st.textContent = "正在应用并编译…（编译失败会自动修复重试）";
   st.className = "status busy";
   try {
-    const r = await api(`/api/projects/${S.slug}/ai/apply`,
-      json("POST", { path: AI.path, content: AI.content, compile: true }));
+    const body = { path: AI.path, content: AI.content, compile: true };
+    if (AI.mode === "selection") {
+      body.start_line = AI.start;
+      body.end_line = AI.end;
+      body.original = AI.original || "";
+    }
+    const r = await api(`/api/projects/${S.slug}/ai/apply`, json("POST", body));
     // 重新加载最终内容（自愈/回滚后可能与提案内容不同）
     const { content } = await api(
       `/api/projects/${S.slug}/file?path=${encodeURIComponent(AI.path)}`
@@ -1128,11 +1192,11 @@ async function aiApply() {
     if (r.compile_unavailable) {
       st.textContent = "已应用。本机无法编译（未装 TeX Live），部署到服务器后请验证";
       st.className = "status";
-      toast("AI 排版已应用（未编译）");
+      toast(AI.mode === "selection" ? "选区排版已应用（未编译）" : "AI 排版已应用（未编译）");
     } else if (r.success) {
-      toast("AI 排版完成");
+      toast(AI.mode === "selection" ? "选区排版完成" : "AI 排版完成");
       $("#ai-modal").hidden = true;
-      AI.content = null;
+      Object.assign(AI, { content: null, original: null, analyzed: false });
       applyErrorMarkers([]);
       showPdfOverlay("正在加载 PDF…");
       try { await loadPdf(); } finally { hidePdfOverlay(); }
@@ -1147,6 +1211,11 @@ async function aiApply() {
   } catch (e) {
     st.textContent = "应用失败: " + e.message;
     st.className = "status error";
+    if (e.message.includes("不一致")) {
+      // 文件在分析后被编辑过 → 方案已失效，必须重新分析
+      $("#btn-ai-apply").hidden = true;
+      AI.content = null;
+    }
   } finally {
     setBusy(btn, false);
   }
@@ -1167,7 +1236,8 @@ function bindEvents() {
   };
 
   /* AI 排版 */
-  $("#btn-ai").onclick = aiAnalyze;
+  $("#btn-ai").onclick = openAiModal;
+  $("#btn-ai-run").onclick = aiRun;
   $("#btn-ai-cancel").onclick = closeAiModal;
   $("#btn-ai-close").onclick = closeAiModal;
   $("#btn-ai-apply").onclick = aiApply;
@@ -1175,6 +1245,9 @@ function bindEvents() {
     if (e.target === $("#ai-modal")) closeAiModal();
   };
   $("#ai-style").onchange = () => saveUI({ aiStyle: $("#ai-style").value });
+  $("#ai-instruction").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); aiRun(); }
+  });
 
   $("#btn-new-project").onclick = openTemplateModal;
   $("#btn-template-close").onclick = () => ($("#template-modal").hidden = true);

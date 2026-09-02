@@ -37,6 +37,10 @@ class AIError(RuntimeError):
     """AI 服务相关错误（配置缺失、网络、模型返回异常）。"""
 
 
+class AIConflictError(AIError):
+    """应用时文件内容与分析快照不一致（用户在分析后又编辑了文件）。"""
+
+
 # ---------- 配置 ----------
 
 def resolve_key() -> str:
@@ -220,13 +224,55 @@ def _analyze_system(style: str) -> str:
     return _ANALYZE_BASE + block + "\n" + _ANALYZE_OUTPUT
 
 
-async def analyze(slug: str, path: str, style: str = STYLE_GENERAL) -> dict:
-    """分析单个文件的排版问题，返回 {summary, content, diff, changed, style}。"""
+_SELECTION_OUTPUT = """
+必须输出严格 JSON（不要任何额外文字）：
+   {"summary": "改动说明（中文）", "content": "选中区域排版后的完整替换文本"}
+注意：content 只是选中区域的替换文本，不要包含选中区域以外的任何内容，也不要输出整个文件。"""
+
+
+def _analyze_system_selection(style: str) -> str:
+    """选区模式：只允许改写选中区域。"""
+    sty = get_style(style)
+    block = f"\n\n【排版标准：{sty['name']}】\n{sty['rules']}" if sty["rules"] else ""
+    return (
+        "你是 LaTeX 排版专家。用户给你一份 LaTeX 文件的完整内容（仅作上下文）和其中的一个选中区域。\n"
+        "你的任务：只改写选中区域的排版，选中区域以外的部分绝对不动。\n\n"
+        "要求：\n"
+        "1. 保留选中区域的全部内容与含义，只调整排版与结构（环境、公式、图表、标题层级等）。\n"
+        "2. 如果用户给出了具体排版要求，优先满足用户要求。\n"
+        "3. 不要修改选中区域以外的内容（包括导言区）；若确实需要补 \\usepackage，在 summary 中提醒用户。\n"
+        "4. 输出的 content 必须能直接替换原选中区域，注意与上下文衔接的换行和缩进。\n"
+        "5. 若选中区域排版已无需修改，content 原样返回并在 summary 中说明。"
+        + block + "\n" + _SELECTION_OUTPUT
+    )
+
+
+def _validate_selection(content: str, start: int, end: int) -> int:
+    n = len(content.splitlines())
+    if start < 1 or end > n or start > end:
+        raise AIError(f"选区超出文件范围（文件共 {n} 行）")
+    return n
+
+
+async def analyze(
+    slug: str,
+    path: str,
+    style: str = STYLE_GENERAL,
+    selection: tuple[int, int] | None = None,
+    instruction: str = "",
+) -> dict:
+    """分析排版问题。
+
+    selection 为 None → 全文模式，content = 排版后的完整文件；
+    selection = (start, end)（1 基、闭区间行号）→ 选区模式，
+    content = 选中区域的替换文本。
+    """
     sty = get_style(style)
     storage.get_project(slug)  # 校验项目存在
     content = storage.read_file(slug, path)
     if len(content) > MAX_ANALYZE_CHARS:
         raise AIError(f"文件过大（{len(content)} 字符），暂不支持整体分析")
+    instruction = (instruction or "").strip()
 
     # 注入项目文件清单：模型只能引用真实存在的图片文件，杜绝编造文件名
     try:
@@ -235,17 +281,37 @@ async def analyze(slug: str, path: str, style: str = STYLE_GENERAL) -> dict:
         files = []
     file_lines = "\n".join(f"  - {f['path']}" for f in files[:200]) or "  （空项目）"
 
-    user_msg = (
-        f"文件路径: {path}\n"
-        f"项目目录当前全部文件清单（\\includegraphics 只能引用此清单中的文件，不得编造文件名）:\n"
-        f"{file_lines}\n"
-        f"文件内容（在 <<<LATEX 与 >>>LATEX 之间）:\n"
-        f"<<<LATEX\n{content}\n>>>LATEX\n"
-        "请按要求输出 JSON。"
-    )
+    if selection:
+        start, end = selection
+        _validate_selection(content, start, end)
+        region = "\n".join(content.splitlines()[start - 1 : end])
+        system_prompt = _analyze_system_selection(style)
+        user_msg = (
+            f"文件路径: {path}\n"
+            f"项目目录当前全部文件清单（\\includegraphics 只能引用此清单中的文件，不得编造文件名）:\n"
+            f"{file_lines}\n"
+            f"完整文件内容（仅供上下文参考，禁止修改选中区域以外的部分，在 <<<LATEX 与 >>>LATEX 之间）:\n"
+            f"<<<LATEX\n{content}\n>>>LATEX\n"
+            f"选中区域：第 {start} 行 ~ 第 {end} 行（在 <<<SELECTED 与 >>>SELECTED 之间）:\n"
+            f"<<<SELECTED\n{region}\n>>>SELECTED\n"
+            f"用户排版要求：{instruction or '（无，按排版标准整理）'}\n"
+            "请按要求输出 JSON。"
+        )
+    else:
+        system_prompt = _analyze_system(style)
+        user_msg = (
+            f"文件路径: {path}\n"
+            f"项目目录当前全部文件清单（\\includegraphics 只能引用此清单中的文件，不得编造文件名）:\n"
+            f"{file_lines}\n"
+            f"文件内容（在 <<<LATEX 与 >>>LATEX 之间）:\n"
+            f"<<<LATEX\n{content}\n>>>LATEX\n"
+            f"用户排版要求：{instruction or '（无，按排版标准整理）'}\n"
+            "请按要求输出 JSON。"
+        )
+
     raw = await _chat(
         [
-            {"role": "system", "content": _analyze_system(style)},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_msg},
         ]
     )
@@ -253,18 +319,36 @@ async def analyze(slug: str, path: str, style: str = STYLE_GENERAL) -> dict:
     new_content = data.get("content")
     if not isinstance(new_content, str) or not new_content.strip():
         raise AIError("模型返回缺少有效的 content 字段")
-    if not new_content.endswith("\n"):
-        new_content += "\n"
 
     summary = str(data.get("summary") or "").strip() or "（模型未给出说明）"
-    changed = new_content.strip() != content.strip()
+
+    if selection:
+        start, end = selection
+        original = "\n".join(content.splitlines()[start - 1 : end])
+        replacement = new_content.rstrip("\n")
+        return {
+            "summary": summary,
+            "content": replacement,
+            "diff": _make_diff(original, replacement, f"{path} 第{start}-{end}行"),
+            "changed": replacement.strip() != original.strip(),
+            "style": style,
+            "style_name": sty["name"],
+            "mode": "selection",
+            "start_line": start,
+            "end_line": end,
+            "original": original,
+        }
+
+    if not new_content.endswith("\n"):
+        new_content += "\n"
     return {
         "summary": summary,
         "content": new_content,
         "diff": _make_diff(content, new_content, path),
-        "changed": changed,
+        "changed": new_content.strip() != content.strip(),
         "style": style,
         "style_name": sty["name"],
+        "mode": "full",
     }
 
 
@@ -324,15 +408,17 @@ def _git_head(proj: Path) -> str | None:
     return r.stdout.strip() if r.returncode == 0 else None
 
 
-async def apply(slug: str, path: str, new_content: str, do_compile: bool = True) -> dict:
-    """应用排版结果：写入（自动提交）→ 编译 → 失败则自愈 → 彻底失败则回滚。"""
+async def _apply_content(slug: str, path: str, new_content: str,
+                         do_compile: bool, mode: str) -> dict:
+    """写入新内容（自动提交）→ 编译 → 失败则自愈 → 彻底失败则回滚。"""
     meta = storage.get_project(slug)
     proj = storage._proj_dir(slug)
     pre_sha = _git_head(proj)
 
     storage.write_file(slug, path, new_content)  # 自动 git 提交
+    base = {"applied": True, "mode": mode}
     if not do_compile:
-        return {"applied": True, "success": None, "compile_unavailable": False,
+        return {**base, "success": None, "compile_unavailable": False,
                 "rolled_back": False, "rounds": [], "log": ""}
 
     current = new_content
@@ -343,7 +429,7 @@ async def apply(slug: str, path: str, new_content: str, do_compile: bool = True)
             result = await compile_mod.compile_project(slug, proj, meta["main_file"])
         except FileNotFoundError:
             # latexmk 不存在（如未安装 TeX Live 的开发机）：无法验证，保留改动
-            return {"applied": True, "success": None, "compile_unavailable": True,
+            return {**base, "success": None, "compile_unavailable": True,
                     "rolled_back": False, "rounds": rounds, "log": ""}
         last_log = result["log"]
         rounds.append({
@@ -351,7 +437,7 @@ async def apply(slug: str, path: str, new_content: str, do_compile: bool = True)
             "seconds": result["seconds"], "timed_out": result["timed_out"],
         })
         if result["success"]:
-            return {"applied": True, "success": True, "compile_unavailable": False,
+            return {**base, "success": True, "compile_unavailable": False,
                     "rolled_back": False, "rounds": rounds,
                     "log": "\n".join(last_log.splitlines()[-30:])}
         if round_idx >= MAX_REPAIR_ROUNDS:
@@ -366,6 +452,35 @@ async def apply(slug: str, path: str, new_content: str, do_compile: bool = True)
     if pre_sha:
         storage._git(proj, "checkout", "-q", pre_sha, "--", ".", check=False)
         storage._commit(proj, "AI 排版失败，已回滚")
-    return {"applied": True, "success": False, "compile_unavailable": False,
+    return {**base, "success": False, "compile_unavailable": False,
             "rolled_back": bool(pre_sha), "rounds": rounds,
             "log": "\n".join(last_log.splitlines()[-60:])}
+
+
+async def apply(slug: str, path: str, new_content: str, do_compile: bool = True) -> dict:
+    """应用全文排版结果。"""
+    storage.get_project(slug)
+    return await _apply_content(slug, path, new_content, do_compile, mode="full")
+
+
+async def apply_selection(
+    slug: str, path: str, start: int, end: int,
+    original: str, replacement: str, do_compile: bool = True,
+) -> dict:
+    """应用选区排版结果：校验区域未变 → 行级替换 → 编译自愈。"""
+    storage.get_project(slug)
+    content = storage.read_file(slug, path)
+    _validate_selection(content, start, end)
+
+    # 错位保护：分析后用户又编辑了文件，则拒绝应用
+    current_region = "\n".join(content.splitlines()[start - 1 : end])
+    if current_region.strip() != (original or "").strip():
+        raise AIConflictError("文件内容与分析时不一致（分析后发生过编辑），请重新分析")
+
+    lines = content.splitlines()
+    rep_lines = replacement.splitlines()
+    new_content = "\n".join(lines[: start - 1] + rep_lines + lines[end:]) + "\n"
+    result = await _apply_content(slug, path, new_content, do_compile, mode="selection")
+    result["start_line"] = start
+    result["end_line"] = start + len(rep_lines) - 1 if rep_lines else start
+    return result

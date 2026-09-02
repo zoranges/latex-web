@@ -79,12 +79,18 @@ class FormatBody(BaseModel):
 class AIAnalyzeBody(BaseModel):
     path: str
     style: str = "general"
+    instruction: str = ""
+    start_line: int | None = None
+    end_line: int | None = None
 
 
 class AIApplyBody(BaseModel):
     path: str
     content: str
     compile: bool = True
+    start_line: int | None = None
+    end_line: int | None = None
+    original: str = ""
 
 
 def _err(e: Exception) -> HTTPException:
@@ -312,9 +318,12 @@ def api_ai_styles():
 
 @app.post("/api/projects/{slug}/ai/analyze")
 async def api_ai_analyze(slug: str, body: AIAnalyzeBody):
-    """阶段 1：分析文件排版问题，返回说明 + 新内容 + diff（不写盘）。"""
+    """阶段 1：分析排版问题（全文或选区），返回说明 + 新内容 + diff（不写盘）。"""
+    selection = None
+    if body.start_line is not None and body.end_line is not None:
+        selection = (body.start_line, body.end_line)
     try:
-        return await ai_mod.analyze(slug, body.path, body.style)
+        return await ai_mod.analyze(slug, body.path, body.style, selection, body.instruction)
     except ai_mod.AIError as e:
         raise HTTPException(400, str(e))
     except ValueError as e:
@@ -325,9 +334,16 @@ async def api_ai_analyze(slug: str, body: AIAnalyzeBody):
 
 @app.post("/api/projects/{slug}/ai/apply")
 async def api_ai_apply(slug: str, body: AIApplyBody):
-    """阶段 2：应用排版结果（自动提交 + 编译自愈，失败回滚）。"""
+    """阶段 2：应用排版结果（全文或选区，自动提交 + 编译自愈，失败回滚）。"""
     try:
+        if body.start_line is not None and body.end_line is not None:
+            return await ai_mod.apply_selection(
+                slug, body.path, body.start_line, body.end_line,
+                body.original, body.content, body.compile,
+            )
         return await ai_mod.apply(slug, body.path, body.content, body.compile)
+    except ai_mod.AIConflictError as e:
+        raise HTTPException(409, str(e))
     except ai_mod.AIError as e:
         raise HTTPException(400, str(e))
     except ValueError as e:

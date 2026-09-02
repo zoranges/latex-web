@@ -8,7 +8,7 @@
 - **自动编译** — 保存后自动运行 `latexmk -xelatex -synctex=1`，0.5~2 秒出 PDF
 - **SyncTeX 双向定位** — 点击 PDF 跳转到源码行；编辑器光标定位到 PDF 位置
 - **Git 版本历史** — 每次保存自动 commit，可查看 diff 并一键恢复任意版本
-- **AI 排版** — 大模型分析并修正排版，可选标准（通用 / 数模国赛格式）；两阶段：diff 预览确认 → 应用 + 编译自愈，失败自动回滚
+- **AI 排版** — 大模型分析并修正排版，可选标准（通用 / 数模国赛格式）；支持**定位修正**（选中哪段只改哪段）与排版要求指令交互；两阶段：diff 预览确认 → 应用 + 编译自愈，失败自动回滚
 - **数模国赛论文模板** — 高教社杯全国大学生数学建模竞赛官方格式规范
 - **文件上传** — 上传图片等资源到项目目录
 - **内置模板** — 新建项目时可选 6 种模板（见下）
@@ -59,10 +59,12 @@ bash run.sh
 
 ## AI 排版
 
-工具栏「AI排版」按钮：对当前打开的 `.tex` 文件，让大模型分析排版问题并给出修正。两阶段流程：
+工具栏「AI排版」按钮：打开排版面板。**编辑器中有选区时为「定位修正」模式（只改选中行），无选区则为全文模式**。流程：
 
-1. **分析** — 模型返回排版说明 + 修改后全文，界面展示 unified diff，由你确认
-2. **应用** — 写入（自动 git 提交）→ 编译；编译失败会把错误日志喂回模型自动修复（最多 2 轮）；仍失败则自动回滚到 AI 修改前的版本
+1. **交互分析** — 面板中可输入自然语言排版要求（如「改成三线表」「公式居中编号」）；模型返回改动说明 + 新内容，界面展示 unified diff；不满意可调整要求后「重新分析」，反复迭代
+2. **应用** — 确认后写入（自动 git 提交）→ 编译；编译失败会把错误日志喂回模型自动修复（最多 2 轮）；仍失败则自动回滚到 AI 修改前的版本
+
+选区模式的安全机制：模型只返回选中区域的替换文本（不动其余部分）；应用时校验选区内容与分析时一致，若期间编辑过文件则返回 409 要求重新分析。
 
 **排版标准**：按钮旁的下拉框可选——
 
@@ -148,8 +150,8 @@ data/
 | POST | `/api/projects/{slug}/sync-backward` | SyncTeX 反向 `{page,x,y}` |
 | GET | `/api/ai/config` | AI 服务配置状态（是否已配置、模型名） |
 | GET | `/api/ai/styles` | 可选排版标准列表 |
-| POST | `/api/projects/{slug}/ai/analyze` | AI 排版阶段 1：分析 `{path, style}`，返回 summary/新内容/diff（不写盘） |
-| POST | `/api/projects/{slug}/ai/apply` | AI 排版阶段 2：应用 `{path, content, compile}`，编译自愈失败自动回滚 |
+| POST | `/api/projects/{slug}/ai/analyze` | AI 排版阶段 1：分析 `{path, style, instruction, start_line?, end_line?}`，全文或选区，返回说明/新内容/diff（不写盘） |
+| POST | `/api/projects/{slug}/ai/apply` | AI 排版阶段 2：应用 `{path, content, compile, start_line?, end_line?, original?}`，选区带错位校验（409），编译自愈失败自动回滚 |
 | GET | `/api/projects/{slug}/history` | 提交列表 |
 | GET | `/api/projects/{slug}/history/{sha}` | 提交 diff |
 | POST | `/api/projects/{slug}/history/{sha}/restore` | 恢复版本 |

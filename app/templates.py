@@ -344,6 +344,9 @@ CUMCM = r"""\documentclass[UTF8,a4paper]{ctexart}
 \vspace{0.8em}
 \noindent{\heiti 关键词：}
 
+% 目录：按项目统一要求保留，置于摘要之后、正文之前。
+\tableofcontents
+
 \newpage
 
 % ==================== 正文 ====================
@@ -447,7 +450,7 @@ TEMPLATES: list[dict] = [
     {
         "id": "cumcm",
         "name": "数模国赛论文",
-        "desc": "电子版论文骨架：摘要、正文、结果分析、参考文献和附录；纸质版附页请使用当届官方专用页",
+        "desc": "电子版论文骨架：摘要、目录、正文、结果分析、参考文献和附录；纸质版附页请使用当届官方专用页",
         "main": "main.tex",
         "files": {"main.tex": CUMCM},
     },

@@ -284,8 +284,9 @@ CUMCM = r"""\documentclass[UTF8,zihao=-4]{ctexart}  % 正文小四号宋体
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{caption}
+\usepackage{subcaption}   % 并排子图：\begin{subfigure}...\end{subfigure}
 \usepackage{enumitem}
-\usepackage{float}
+\usepackage{float}        % 提供 [H]：图片精确定位
 
 % 西文使用 Times New Roman（缺少时退回 TeX Gyre Termes）
 \IfFontExistsTF{Times New Roman}%
@@ -297,6 +298,11 @@ CUMCM = r"""\documentclass[UTF8,zihao=-4]{ctexart}  % 正文小四号宋体
 \DeclareCaptionFont{wuhei}{\zihao{5}\heiti}
 \captionsetup[figure]{font={wusong},position=below,labelsep=quad}
 \captionsetup[table]{font={wuhei},position=above,labelsep=quad}
+
+% 放宽浮动比例限制，减少图片被积压到文档末尾
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\floatpagefraction}{0.85}
 
 % 标题：一级四号黑体居中；二/三级小四黑体左对齐
 \ctexset{
@@ -432,6 +438,24 @@ CUMCM = r"""\documentclass[UTF8,zihao=-4]{ctexart}  % 正文小四号宋体
   \caption{示例图题（位于图下方）}
   \label{fig:demo}
 \end{figure}
+
+% 并排子图示例（需 subcaption；取消注释前请确保图片文件真实存在）：
+% \begin{figure}[htbp]
+%   \centering
+%   \begin{subfigure}{0.45\linewidth}
+%     \centering
+%     \includegraphics[width=\linewidth]{figs/left.png}
+%     \caption{左图}
+%   \end{subfigure}
+%   \hfill
+%   \begin{subfigure}{0.45\linewidth}
+%     \centering
+%     \includegraphics[width=\linewidth]{figs/right.png}
+%     \caption{右图}
+%   \end{subfigure}
+%   \caption{并排子图示例}
+%   \label{fig:subdemo}
+% \end{figure}
 
 \begin{table}[htbp]
   \centering

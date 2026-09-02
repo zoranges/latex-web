@@ -155,20 +155,27 @@ _CUMCM_RULES = """该文档是全国大学生数学建模竞赛（高教社杯�
 
 【图表与公式】
 10. 图、表必须有标题且编号：图题位于图下方，表题位于表上方；表格用 booktabs 三线表；
-11. 图片用 figure 环境（[htbp] 浮动位置 + \\label），核心公式必须编号（equation/align 环境）；
-12. 正文引用图表用 \\ref。
+11. 图片排版规则（严格执行）：
+    a. \\includegraphics 必须带宽度约束（如 width=0.8\\linewidth），不得超出文本宽度或页边距；
+    b. 只能引用项目目录中真实存在的图片文件（见用户提供的文件清单），不得编造文件名；
+       没有图片文件时用占位框（\\fbox）或注释掉，并在 summary 中说明；
+    c. 图位置需要精确固定时用 [H]（float 宏包），一般情形用 [htbp]；
+    d. 正文必须用 图~\\ref{fig:...} 提及每张图，避免孤图；多图并排用 subcaption 的 subfigure；
+    e. 每图必须有 \\caption（图题）与 \\label；避免大图跨页断开；
+12. 核心公式必须编号（equation/align 环境）；
+13. 正文引用图表用 \\ref。
 
 【参考文献与附录】
-13. 参考文献按正文引用次序列出，正文引用处用方括号编号（如 [1][3]），格式：
+14. 参考文献按正文引用次序列出，正文引用处用方括号编号（如 [1][3]），格式：
     书籍：[编号] 作者，书名，出版地：出版社，出版年。
     期刊：[编号] 作者，论文名，杂志名，卷期号：起止页码，出版年。
     网上资源：[编号] 作者，资源标题，网址，访问时间（年月日）。
-14. 程序源代码放在附录（\\appendix + verbatim）。
+15. 程序源代码放在附录（\\appendix + verbatim）。
 
 【导言区】
-15. 若文件缺少符合竞赛标准的导言区，请补齐：\\documentclass[UTF8,zihao=-4]{ctexart}、
+16. 若文件缺少符合竞赛标准的导言区，请补齐：\\documentclass[UTF8,zihao=-4]{ctexart}、
     geometry 四边 2.5cm、amsmath、amssymb、graphicx、booktabs、caption
-    （图题小五宋体位于图下方、表题小五黑体位于表上方），并用 \\ctexset 设置
+    （图题小五宋体位于图下方、表题小五黑体位于表上方）、subcaption、float，并用 \\ctexset 设置
     一级标题四号黑体居中、二三级标题小四黑体左对齐。不要加页眉。"""
 
 STYLES: dict[str, dict] = {
@@ -192,12 +199,15 @@ _ANALYZE_BASE = """你是 LaTeX 排版专家。用户会给你一个 LaTeX 源�
 2. 修正排版与结构问题：
    - 段落、列表、表格使用合适的环境（itemize/enumerate/tabular 等）；表格优先 booktabs 三线表风格
    - 数学公式使用合适的环境（行内 $...$、行间方程用 equation/align 等）
-   - 图片使用 figure 环境，带 [htbp] 浮动位置、\\caption 与 \\label
+   - 图片使用 figure 环境，带 [htbp] 浮动位置、\\caption 与 \\label；
+     \\includegraphics 必须带宽度约束（如 width=0.8\\linewidth），禁止超出文本宽度
    - 章节层级使用 \\section/\\subsection 等合理划分
    - 若文件含导言区（\\documentclass），可按需在导言区补充 \\usepackage（如 booktabs、graphicx）
    - 规范缩进与空行
 3. 如果输入是未结构化的纯文本，把它转换为结构良好的 LaTeX；若原文件已有 documentclass，保持原有文档框架。
-4. 如果排版已经很好，content 原样返回并在 summary 中说明。"""
+4. 如果排版已经很好，content 原样返回并在 summary 中说明。
+5. 引用图片时只能使用项目目录中真实存在的文件（见用户提供的文件清单）；
+   没有合适的图片文件时，用占位框（\\fbox）或注释掉图片，并在 summary 中说明。"""
 
 _ANALYZE_OUTPUT = """
 必须输出严格 JSON（不要任何额外文字）：
@@ -218,8 +228,17 @@ async def analyze(slug: str, path: str, style: str = STYLE_GENERAL) -> dict:
     if len(content) > MAX_ANALYZE_CHARS:
         raise AIError(f"文件过大（{len(content)} 字符），暂不支持整体分析")
 
+    # 注入项目文件清单：模型只能引用真实存在的图片文件，杜绝编造文件名
+    try:
+        files = storage.list_files(slug)
+    except Exception:
+        files = []
+    file_lines = "\n".join(f"  - {f['path']}" for f in files[:200]) or "  （空项目）"
+
     user_msg = (
         f"文件路径: {path}\n"
+        f"项目目录当前全部文件清单（\\includegraphics 只能引用此清单中的文件，不得编造文件名）:\n"
+        f"{file_lines}\n"
         f"文件内容（在 <<<LATEX 与 >>>LATEX 之间）:\n"
         f"<<<LATEX\n{content}\n>>>LATEX\n"
         "请按要求输出 JSON。"

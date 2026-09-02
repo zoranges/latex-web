@@ -193,6 +193,70 @@ header {
   animation: spin 0.7s linear infinite;
 }
 
+.auth-user {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ---------- 账号弹窗 ---------- */
+#auth-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(3px);
+}
+#auth-modal[hidden] { display: none; }
+.auth-card {
+  width: min(380px, calc(100% - 32px));
+  padding: 30px;
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 22px;
+  font-weight: 700;
+}
+.auth-card h1 { font-size: 24px; margin-bottom: 6px; }
+.auth-card > p { color: var(--text-dim); font-size: 13px; margin-bottom: 22px; }
+.auth-card form { display: flex; flex-direction: column; gap: 7px; }
+.auth-card label { color: var(--text-dim); font-size: 12px; margin-top: 5px; }
+.auth-card input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+.auth-card input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.auth-card form .btn { justify-content: center; margin-top: 12px; padding: 9px 14px; }
+.auth-error { color: var(--red); font-size: 12px; line-height: 1.5; margin-top: 5px; }
+.auth-switch {
+  width: 100%;
+  margin-top: 15px;
+  padding: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+}
+.auth-switch:hover { text-decoration: underline; }
+
 /* ---------- 主区域 ---------- */
 .main { display: flex; flex: 1; min-height: 0; }
 

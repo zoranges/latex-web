@@ -1,11 +1,12 @@
 """端到端冒烟测试：真实浏览器中驱动 LaTeX Web。"""
 import asyncio
 import sys
+import time
 
 from playwright.async_api import async_playwright
 
 BASE = "http://127.0.0.1:8090"
-PROJECT_NAME = "测试项目"
+PROJECT_NAME = f"测试项目-{int(time.time())}"
 
 ok = 0
 
@@ -33,6 +34,29 @@ async def main():
         await page.goto(BASE, wait_until="load")
         await page.wait_for_selector("#editor-host .monaco-editor", timeout=20000)
         check("Monaco 编辑器加载", True)
+
+        # 每次测试使用独立账号，避免共享服务上的项目和登录态互相影响。
+        await page.wait_for_function(
+            "document.querySelector('#auth-modal').hidden === false || window.LW?.user",
+            timeout=10000,
+        )
+        if await page.locator("#auth-modal").is_visible():
+            await page.click("#auth-switch")
+            await page.fill("#auth-username", f"e2e_{int(time.time())}")
+            await page.fill("#auth-password", "e2e-password-2026")
+            await page.fill("#auth-password-confirm", "e2e-password-2026")
+            await page.click("#auth-submit")
+            await page.wait_for_selector("#auth-modal", state="hidden", timeout=10000)
+
+        # 新账号没有项目时，用模板创建本次测试项目。
+        await page.wait_for_timeout(500)
+        items = await page.locator("#project-list .project-item span").all_text_contents()
+        if not any(PROJECT_NAME in t for t in items):
+            await page.click("#btn-new-project")
+            await page.wait_for_selector("#template-modal:not([hidden]) .tpl-card", timeout=10000)
+            await page.fill("#tpl-name", PROJECT_NAME)
+            await page.click("#btn-template-create")
+            await page.wait_for_selector("#project-list .project-item", timeout=20000)
 
         # 项目列表
         await page.wait_for_selector("#project-list .project-item", timeout=10000)

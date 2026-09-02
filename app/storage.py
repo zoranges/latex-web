@@ -16,6 +16,7 @@ PROJECTS_DIR = DATA_DIR / "projects"
 DB_PATH = DATA_DIR / "meta.db"
 
 _SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 # 编译产物，不在文件树中显示（PDF 通过预览/下载按钮获取）
 _ARTIFACT_EXTS = {
@@ -32,15 +33,135 @@ def _connect() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS users (
+               id            INTEGER PRIMARY KEY AUTOINCREMENT,
+               username      TEXT NOT NULL COLLATE NOCASE UNIQUE,
+               password_hash TEXT NOT NULL,
+               created_at    TEXT NOT NULL
+           )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS sessions (
+               token_hash TEXT PRIMARY KEY,
+               user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               created_at INTEGER NOT NULL,
+               expires_at INTEGER NOT NULL
+           )"""
+    )
     conn.execute(
         """CREATE TABLE IF NOT EXISTS projects (
                slug       TEXT PRIMARY KEY,
                name       TEXT NOT NULL,
                main_file  TEXT NOT NULL DEFAULT 'main.tex',
-               created_at TEXT NOT NULL
+               created_at TEXT NOT NULL,
+               user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE
            )"""
     )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)")}
+    if "user_id" not in columns:
+        # 兼容旧版单用户数据库；首次注册时再把这些项目交给首个用户。
+        conn.execute("ALTER TABLE projects ADD COLUMN user_id INTEGER REFERENCES users(id)")
+    conn.commit()
     return conn
+
+
+# ---------- 用户与会话 ----------
+
+def create_user(username: str, password_hash: str) -> dict:
+    conn = _connect()
+    try:
+        first_user = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+        now = _now()
+        try:
+            cur = conn.execute(
+                "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
+                (username, password_hash, now),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("用户名已存在")
+        user_id = int(cur.lastrowid)
+        if first_user:
+            # 保留升级前单用户实例中的项目，避免升级后历史数据消失。
+            conn.execute("UPDATE projects SET user_id = ? WHERE user_id IS NULL", (user_id,))
+        conn.commit()
+        return {"id": user_id, "username": username, "created_at": now}
+    finally:
+        conn.close()
+
+
+def find_user_by_username(username: str) -> dict | None:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT id, username, password_hash, created_at FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {"id": row[0], "username": row[1], "password_hash": row[2], "created_at": row[3]}
+
+
+def find_user_by_id(user_id: int) -> dict | None:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT id, username, created_at FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {"id": row[0], "username": row[1], "created_at": row[2]}
+
+
+def create_session(token_hash: str, user_id: int, created_at: int, expires_at: int) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?,?,?,?)",
+            (token_hash, user_id, created_at, expires_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def find_user_by_session(token_hash: str, now: int) -> dict | None:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            """SELECT u.id, u.username, u.created_at
+               FROM sessions s JOIN users u ON u.id = s.user_id
+               WHERE s.token_hash = ? AND s.expires_at > ?""",
+            (token_hash, now),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {"id": row[0], "username": row[1], "created_at": row[2]}
+
+
+def delete_session(token_hash: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def purge_expired_sessions(now: int) -> None:
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _git(proj: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -85,17 +206,20 @@ def _safe(proj: Path, rel: str) -> Path:
     return p
 
 
-def resolve_file(slug: str, path: str) -> Path:
+def resolve_file(slug: str, path: str, user_id: int) -> Path:
+    get_project(slug, user_id)
     return _safe(_proj_dir(slug), path)
 
 
 # ---------- 项目 ----------
 
-def list_projects() -> list[dict]:
+def list_projects(user_id: int) -> list[dict]:
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT slug, name, main_file, created_at FROM projects ORDER BY created_at DESC"
+            """SELECT slug, name, main_file, created_at
+               FROM projects WHERE user_id = ? ORDER BY created_at DESC""",
+            (user_id,),
         ).fetchall()
     finally:
         conn.close()
@@ -106,12 +230,13 @@ def list_projects() -> list[dict]:
     ]
 
 
-def get_project(slug: str) -> dict:
+def get_project(slug: str, user_id: int) -> dict:
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT slug, name, main_file, created_at FROM projects WHERE slug = ?",
-            (slug,),
+            """SELECT slug, name, main_file, created_at
+               FROM projects WHERE slug = ? AND user_id = ?""",
+            (slug, user_id),
         ).fetchone()
     finally:
         conn.close()
@@ -120,7 +245,7 @@ def get_project(slug: str) -> dict:
     return {"slug": row[0], "name": row[1], "main_file": row[2], "created_at": row[3]}
 
 
-def create_project(name: str, template_id: str = "article") -> dict:
+def create_project(name: str, template_id: str, user_id: int) -> dict:
     from .templates import get_template
 
     tpl = get_template(template_id)
@@ -140,8 +265,9 @@ def create_project(name: str, template_id: str = "article") -> dict:
     conn = _connect()
     try:
         conn.execute(
-            "INSERT INTO projects (slug, name, main_file, created_at) VALUES (?,?,?,?)",
-            (slug, name.strip(), main_file, now),
+            """INSERT INTO projects
+               (slug, name, main_file, created_at, user_id) VALUES (?,?,?,?,?)""",
+            (slug, name.strip(), main_file, now, user_id),
         )
         conn.commit()
     finally:
@@ -160,24 +286,28 @@ def _rm_readonly(func, path, exc_info):
         pass
 
 
-def delete_project(slug: str) -> None:
-    _proj_dir(slug)  # 校验存在
+def delete_project(slug: str, user_id: int) -> None:
+    get_project(slug, user_id)
     shutil.rmtree(PROJECTS_DIR / slug, onerror=_rm_readonly)
     conn = _connect()
     try:
-        conn.execute("DELETE FROM projects WHERE slug = ?", (slug,))
+        conn.execute("DELETE FROM projects WHERE slug = ? AND user_id = ?", (slug, user_id))
         conn.commit()
     finally:
         conn.close()
 
 
-def set_main_file(slug: str, main_file: str) -> None:
+def set_main_file(slug: str, main_file: str, user_id: int) -> None:
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
     if not _safe(proj, main_file).is_file():
         raise FileNotFoundError("主文件不存在")
     conn = _connect()
     try:
-        conn.execute("UPDATE projects SET main_file = ? WHERE slug = ?", (main_file, slug))
+        conn.execute(
+            "UPDATE projects SET main_file = ? WHERE slug = ? AND user_id = ?",
+            (main_file, slug, user_id),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -185,7 +315,8 @@ def set_main_file(slug: str, main_file: str) -> None:
 
 # ---------- 文件 ----------
 
-def list_files(slug: str) -> list[dict]:
+def list_files(slug: str, user_id: int) -> list[dict]:
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
     items = []
     for p in sorted(proj.rglob("*")):
@@ -205,8 +336,9 @@ _NEWLABEL_RE = re.compile(r"\\newlabel\{([^}]*)\}")
 _BIBENTRY_RE = re.compile(r"^\s*@(\w+)\{\s*([^,\s{}]+)\s*,", re.M)
 
 
-def collect_ref_data(slug: str) -> dict:
+def collect_ref_data(slug: str, user_id: int) -> dict:
     """从 .aux 收集 \\newlabel 标签名、从 .bib 收集文献条目 key，供编辑器补全。"""
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
     labels: list[str] = []
     seen: set[str] = set()
@@ -233,8 +365,8 @@ def collect_ref_data(slug: str) -> dict:
     return {"labels": labels[:500], "bibkeys": bibkeys[:500]}
 
 
-def read_file(slug: str, path: str) -> str:
-    p = resolve_file(slug, path)
+def read_file(slug: str, path: str, user_id: int) -> str:
+    p = resolve_file(slug, path, user_id)
     if not p.is_file():
         raise FileNotFoundError("文件不存在")
     data = p.read_bytes()
@@ -244,7 +376,8 @@ def read_file(slug: str, path: str) -> str:
         raise ValueError("二进制文件无法在编辑器中打开")
 
 
-def write_file(slug: str, path: str, content: str) -> None:
+def write_file(slug: str, path: str, content: str, user_id: int) -> None:
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
     p = _safe(proj, path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -256,7 +389,8 @@ def write_file(slug: str, path: str, content: str) -> None:
     _commit(proj, f"更新 {path}")
 
 
-def delete_file(slug: str, path: str) -> None:
+def delete_file(slug: str, path: str, user_id: int) -> None:
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
     p = _safe(proj, path)
     if not p.is_file():
@@ -265,7 +399,8 @@ def delete_file(slug: str, path: str) -> None:
     _commit(proj, f"删除 {path}")
 
 
-def rename_file(slug: str, old: str, new: str) -> None:
+def rename_file(slug: str, old: str, new: str, user_id: int) -> None:
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
     src = _safe(proj, old)
     dst = _safe(proj, new)
@@ -278,10 +413,13 @@ def rename_file(slug: str, old: str, new: str) -> None:
     _commit(proj, f"重命名 {old} → {new}")
 
 
-def save_upload(slug: str, subdir: str, filename: str, data: bytes) -> str:
+def save_upload(slug: str, subdir: str, filename: str, data: bytes, user_id: int) -> str:
     """保存上传文件，返回项目内相对路径。"""
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise ValueError("上传文件不能超过 50 MB")
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
-    filename = Path(filename).name or "upload.bin"
+    filename = Path(filename.replace("\\", "/")).name or "upload.bin"
     rel = f"{subdir.strip('/')}/{filename}" if subdir.strip("/") else filename
     target = _safe(proj, rel)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -292,7 +430,8 @@ def save_upload(slug: str, subdir: str, filename: str, data: bytes) -> str:
 
 # ---------- 历史版本 ----------
 
-def history(slug: str, limit: int = 200) -> list[dict]:
+def history(slug: str, user_id: int, limit: int = 200) -> list[dict]:
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
     r = _git(
         proj, "log", "--pretty=format:%H%x1f%h%x1f%ad%x1f%s",
@@ -308,7 +447,8 @@ def history(slug: str, limit: int = 200) -> list[dict]:
     return commits
 
 
-def commit_diff(slug: str, sha: str) -> str:
+def commit_diff(slug: str, sha: str, user_id: int) -> str:
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
     try:
         r = _git(
@@ -321,7 +461,8 @@ def commit_diff(slug: str, sha: str) -> str:
     return r.stdout[:300_000]
 
 
-def restore_commit(slug: str, sha: str) -> None:
+def restore_commit(slug: str, sha: str, user_id: int) -> None:
+    get_project(slug, user_id)
     proj = _proj_dir(slug)
     try:
         _git(proj, "checkout", "-q", sha, "--", ".")

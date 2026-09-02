@@ -373,6 +373,7 @@ async def analyze(
     style: str = STYLE_GENERAL,
     selection: tuple[int, int] | None = None,
     instruction: str = "",
+    user_id: int | None = None,
 ) -> dict:
     """分析排版问题。
 
@@ -381,15 +382,17 @@ async def analyze(
     content = 选中区域的替换文本。
     """
     sty = get_style(style)
-    storage.get_project(slug)  # 校验项目存在
-    content = storage.read_file(slug, path)
+    if user_id is None:
+        raise AIError("缺少用户身份，无法进行 AI 排版")
+    storage.get_project(slug, user_id)  # 校验项目存在且属于当前用户
+    content = storage.read_file(slug, path, user_id)
     if len(content) > MAX_ANALYZE_CHARS:
         raise AIError(f"文件过大（{len(content)} 字符），暂不支持整体分析")
     instruction = (instruction or "").strip()
 
     # 注入项目文件清单：模型只能引用真实存在的图片文件，杜绝编造文件名
     try:
-        files = storage.list_files(slug)
+        files = storage.list_files(slug, user_id)
     except Exception:
         files = []
     file_lines = "\n".join(f"  - {f['path']}" for f in files[:200]) or "  （空项目）"
@@ -526,15 +529,15 @@ def _git_head(proj: Path) -> str | None:
 
 
 async def _apply_content(slug: str, path: str, new_content: str,
-                         do_compile: bool, mode: str) -> dict:
+                         do_compile: bool, mode: str, user_id: int) -> dict:
     """写入新内容（自动提交）→ 编译 → 失败则自愈 → 彻底失败则回滚。"""
-    meta = storage.get_project(slug)
+    meta = storage.get_project(slug, user_id)
     proj = storage._proj_dir(slug)
     pre_sha = _git_head(proj)
 
     # 最后一层保护：即使用户编辑了预览内容，也不把行首圆点分行写入论文。
     new_content, _ = _remove_ai_line_markers(new_content)
-    storage.write_file(slug, path, new_content)  # 自动 git 提交
+    storage.write_file(slug, path, new_content, user_id)  # 自动 git 提交
     base = {"applied": True, "mode": mode}
     if not do_compile:
         return {**base, "success": None, "compile_unavailable": False,
@@ -565,7 +568,7 @@ async def _apply_content(slug: str, path: str, new_content: str,
         if fixed is None or fixed.strip() == current.strip():
             break
         current = fixed
-        storage.write_file(slug, path, current)
+        storage.write_file(slug, path, current, user_id)
 
     # 自愈失败 → 回滚到 AI 修改之前
     if pre_sha:
@@ -576,19 +579,29 @@ async def _apply_content(slug: str, path: str, new_content: str,
             "log": "\n".join(last_log.splitlines()[-60:])}
 
 
-async def apply(slug: str, path: str, new_content: str, do_compile: bool = True) -> dict:
+async def apply(
+    slug: str, path: str, new_content: str,
+    do_compile: bool = True, user_id: int | None = None,
+) -> dict:
     """应用全文排版结果。"""
-    storage.get_project(slug)
-    return await _apply_content(slug, path, new_content, do_compile, mode="full")
+    if user_id is None:
+        raise AIError("缺少用户身份，无法应用 AI 排版")
+    storage.get_project(slug, user_id)
+    return await _apply_content(
+        slug, path, new_content, do_compile, mode="full", user_id=user_id
+    )
 
 
 async def apply_selection(
     slug: str, path: str, start: int, end: int,
     original: str, replacement: str, do_compile: bool = True,
+    user_id: int | None = None,
 ) -> dict:
     """应用选区排版结果：校验区域未变 → 行级替换 → 编译自愈。"""
-    storage.get_project(slug)
-    content = storage.read_file(slug, path)
+    if user_id is None:
+        raise AIError("缺少用户身份，无法应用 AI 排版")
+    storage.get_project(slug, user_id)
+    content = storage.read_file(slug, path, user_id)
     _validate_selection(content, start, end)
 
     # 错位保护：分析后用户又编辑了文件，则拒绝应用
@@ -599,7 +612,9 @@ async def apply_selection(
     lines = content.splitlines()
     rep_lines = replacement.splitlines()
     new_content = "\n".join(lines[: start - 1] + rep_lines + lines[end:]) + "\n"
-    result = await _apply_content(slug, path, new_content, do_compile, mode="selection")
+    result = await _apply_content(
+        slug, path, new_content, do_compile, mode="selection", user_id=user_id
+    )
     result["start_line"] = start
     result["end_line"] = start + len(rep_lines) - 1 if rep_lines else start
     return result

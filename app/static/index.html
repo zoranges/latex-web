@@ -54,10 +54,36 @@
     <button id="btn-sync" class="btn" title="把光标所在行定位到 PDF（SyncTeX 正向）"><svg class="icon"><use href="#i-sync"/></svg><span class="lbl">定位</span></button>
     <button id="btn-download" class="btn" title="下载 PDF"><svg class="icon"><use href="#i-download"/></svg><span class="lbl">PDF</span></button>
     <button id="btn-history" class="btn" title="版本历史（每次保存自动记录）"><svg class="icon"><use href="#i-clock"/></svg><span class="lbl">历史</span></button>
+    <span id="auth-user" class="auth-user" hidden></span>
+    <button id="btn-logout" class="btn" title="退出登录" hidden>退出</button>
     <span id="status" class="status"></span>
   </div>
 </header>
 <div id="drawer-overlay" hidden></div>
+
+<div id="auth-modal" class="auth-overlay" hidden>
+  <div class="auth-card">
+    <div class="auth-brand"><span class="logo-mark">T<sub>E</sub>X</span>LaTeX Web</div>
+    <h1 id="auth-title">登录</h1>
+    <p id="auth-subtitle">登录后管理你的论文项目和图片资源</p>
+    <form id="auth-form">
+      <label for="auth-username">用户名</label>
+      <input id="auth-username" type="text" autocomplete="username"
+             minlength="3" maxlength="32" pattern="[A-Za-z0-9_]+" required>
+      <label for="auth-password">密码</label>
+      <input id="auth-password" type="password" autocomplete="current-password"
+             minlength="8" maxlength="128" required>
+      <div id="auth-confirm-row" hidden>
+        <label for="auth-password-confirm">确认密码</label>
+        <input id="auth-password-confirm" type="password" autocomplete="new-password"
+               minlength="8" maxlength="128">
+      </div>
+      <div id="auth-error" class="auth-error" hidden></div>
+      <button id="auth-submit" class="btn primary" type="submit">登录</button>
+    </form>
+    <button id="auth-switch" class="auth-switch" type="button">没有账号？注册</button>
+  </div>
+</div>
 
 <div class="main">
   <aside>
@@ -182,7 +208,7 @@
 </div>
 
 <div id="toast"></div>
-<input type="file" id="upload-input" hidden>
+<input type="file" id="upload-input" accept="image/*,.tex,.bib,.py,.r,.m,.csv,.txt" hidden>
 
 <script src="/static/vendor/monaco/loader.js"></script>
 <script src="/static/vendor/pdfjs/pdf.min.js"></script>

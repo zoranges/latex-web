@@ -4,12 +4,20 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import shutil
 import subprocess
+import re
 from pathlib import Path
 
 COMPILE_TIMEOUT = 120  # 编译超时（秒）
 LOG_TAIL_LINES = 600    # 返回给前端的日志行数
 FORMAT_TIMEOUT = 20     # latexindent 超时（秒）
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".pdf", ".eps", ".bmp", ".tif", ".tiff", ".svg"}
+_BARE_IMAGE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:png|jpg|jpeg|pdf|eps|bmp|tif|tiff|svg))\s*$",
+    re.IGNORECASE,
+)
+_CODE_ENVS = {"verbatim", "Verbatim", "lstlisting", "minted", "comment"}
 
 _locks: dict[str, asyncio.Lock] = {}
 
@@ -27,10 +35,124 @@ def pdf_path(proj: Path, main_file: str) -> Path:
     return proj / f"{stem}.pdf"
 
 
+def _prepare_graphic_aliases(proj: Path, main_file: str) -> list[Path]:
+    """为子目录图片创建临时同名副本，使 \\includegraphics{a.jpg} 可以直接引用。"""
+    main_dir = (proj / Path(main_file).parent).resolve()
+    if not main_dir.is_relative_to(proj.resolve()):
+        return []
+    aliases: list[Path] = []
+    for source in sorted(proj.rglob("*")):
+        if (
+            not source.is_file()
+            or source.is_symlink()
+            or ".git" in source.relative_to(proj).parts
+            or source.suffix.lower() not in _IMAGE_EXTS
+            or source.parent.resolve() == main_dir
+        ):
+            continue
+        alias = main_dir / source.name
+        if alias.exists():
+            # 项目中已有同名文件时，遵守 LaTeX 原本的查找结果，不覆盖它。
+            continue
+        try:
+            shutil.copy2(source, alias)
+            aliases.append(alias)
+        except OSError:
+            # 单个图片无法建立临时映射时交给 LaTeX 报出具体缺图错误。
+            continue
+    return aliases
+
+
+def _remove_graphic_aliases(aliases: list[Path]) -> None:
+    for alias in aliases:
+        try:
+            alias.unlink()
+        except OSError:
+            pass
+
+
+def _prepare_bare_image_references(proj: Path, main_file: str) -> list[tuple[Path, bytes]]:
+    """把主文件中单独一行的图片名转换为 includegraphics，编译后恢复原文。"""
+    main_path = (proj / main_file).resolve()
+    if not main_path.is_file() or not main_path.is_relative_to(proj.resolve()):
+        return []
+    try:
+        original_bytes = main_path.read_bytes()
+        content = original_bytes.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    image_names = {
+        p.name.casefold()
+        for p in proj.rglob("*")
+        if p.is_file() and not p.is_symlink()
+        and ".git" not in p.relative_to(proj).parts
+        and p.suffix.lower() in _IMAGE_EXTS
+    }
+    if not image_names:
+        return []
+
+    changed = False
+    in_code = False
+    in_math = False
+    output: list[str] = []
+    for line in content.splitlines(keepends=True):
+        stripped = line.strip()
+        begin = re.search(r"\\begin\{([^}]+)\}", stripped)
+        end = re.search(r"\\end\{([^}]+)\}", stripped)
+        if begin and begin.group(1) in _CODE_ENVS:
+            in_code = True
+        if end and end.group(1) in _CODE_ENVS:
+            in_code = False
+        if stripped.startswith(("%", "\\%")) or in_code or in_math:
+            output.append(line)
+            if stripped in {r"\]", "$$"}:
+                in_math = False
+            continue
+        if stripped in {r"\[", "$$"}:
+            in_math = True
+            output.append(line)
+            continue
+        match = _BARE_IMAGE_RE.match(line.rstrip("\r\n"))
+        if match and match.group("name").casefold() in image_names:
+            ending = line[len(line.rstrip("\r\n")):]
+            name = match.group("name")
+            output.append(
+                f"{match.group('indent')}\\includegraphics[width=0.8\\linewidth]{{{name}}}{ending}"
+            )
+            changed = True
+        else:
+            output.append(line)
+
+    if not changed:
+        return []
+    rewritten = "".join(output)
+    if not re.search(r"\\(?:usepackage|RequirePackage)(?:\[[^]]*\])?\{[^}]*\bgraphicx\b", rewritten):
+        marker = re.search(r"^\\documentclass(?:\[[^]]*\])?\{[^}]+\}.*(?:\r?\n|$)", rewritten, re.M)
+        if marker:
+            rewritten = rewritten[:marker.end()] + "\\usepackage{graphicx}\n" + rewritten[marker.end():]
+    try:
+        with main_path.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(rewritten)
+    except OSError:
+        return []
+    return [(main_path, original_bytes)]
+
+
+def _restore_source_files(files: list[tuple[Path, bytes]]) -> None:
+    for path, content in files:
+        try:
+            path.write_bytes(content)
+        except OSError:
+            pass
+
+
 async def compile_project(slug: str, proj: Path, main_file: str) -> dict:
     """编译项目，返回 {success, log, pdf, returncode, seconds, timed_out}。"""
     async with _lock_for(slug):
         pdf = pdf_path(proj, main_file)
+        aliases = _prepare_graphic_aliases(proj, main_file)
+        rewritten_sources = _prepare_bare_image_references(proj, main_file)
         cmd = [
             # -xelatex 必须在其他引擎选项之后、且不能再跟 -pdf（后者会覆盖回 pdflatex）
             "latexmk", "-xelatex", "-g",
@@ -40,35 +162,39 @@ async def compile_project(slug: str, proj: Path, main_file: str) -> dict:
             main_file,
         ]
         started = asyncio.get_event_loop().time()
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=proj,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
-        )
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=COMPILE_TIMEOUT)
-            timed_out = False
-        except asyncio.TimeoutError:
-            timed_out = True
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=proj,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            )
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            stdout, _ = await proc.communicate()
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=COMPILE_TIMEOUT)
+                timed_out = False
+            except asyncio.TimeoutError:
+                timed_out = True
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                stdout, _ = await proc.communicate()
 
-        log = stdout.decode("utf-8", errors="replace")
-        elapsed = asyncio.get_event_loop().time() - started
-        success = (not timed_out) and proc.returncode == 0 and pdf.is_file()
-        return {
-            "success": success,
-            "log": "\n".join(log.splitlines()[-LOG_TAIL_LINES:]),
-            "pdf": pdf.name,
-            "returncode": proc.returncode,
-            "seconds": round(elapsed, 1),
-            "timed_out": timed_out,
-        }
+            log = stdout.decode("utf-8", errors="replace")
+            elapsed = asyncio.get_event_loop().time() - started
+            success = (not timed_out) and proc.returncode == 0 and pdf.is_file()
+            return {
+                "success": success,
+                "log": "\n".join(log.splitlines()[-LOG_TAIL_LINES:]),
+                "pdf": pdf.name,
+                "returncode": proc.returncode,
+                "seconds": round(elapsed, 1),
+                "timed_out": timed_out,
+            }
+        finally:
+            _restore_source_files(rewritten_sources)
+            _remove_graphic_aliases(aliases)
 
 
 async def format_content(content: str) -> str:

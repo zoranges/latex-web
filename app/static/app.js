@@ -2,6 +2,7 @@
 
 /* ================= 全局状态 ================= */
 const S = {
+  user: null,         // 当前登录用户
   projects: [],
   slug: null,        // 当前项目 slug
   meta: null,        // 当前项目元数据
@@ -40,6 +41,10 @@ const $$ = (sel) => document.querySelectorAll(sel);
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    S.user = null;
+    showAuthModal();
+  }
   if (!res.ok) throw new Error(data.detail || res.statusText);
   return data;
 }
@@ -101,6 +106,145 @@ function setStatus(text, kind = "") {
   const el = $("#status");
   el.textContent = text;
   el.className = "status " + kind;
+}
+
+/* ================= 账号 ================= */
+const AUTH = { mode: "login", busy: false };
+
+function setAuthUser(user) {
+  S.user = user || null;
+  const badge = $("#auth-user");
+  const logout = $("#btn-logout");
+  badge.textContent = user ? `用户：${user.username}` : "";
+  badge.hidden = !user;
+  logout.hidden = !user;
+}
+
+function setAuthMode(mode) {
+  AUTH.mode = mode;
+  const register = mode === "register";
+  $("#auth-title").textContent = register ? "注册" : "登录";
+  $("#auth-subtitle").textContent = register
+    ? "创建账号后管理你的论文项目和图片资源"
+    : "登录后管理你的论文项目和图片资源";
+  $("#auth-submit").textContent = register ? "注册并登录" : "登录";
+  $("#auth-switch").textContent = register ? "已有账号？登录" : "没有账号？注册";
+  $("#auth-confirm-row").hidden = !register;
+  $("#auth-password-confirm").required = register;
+  $("#auth-password").autocomplete = register ? "new-password" : "current-password";
+  $("#auth-error").hidden = true;
+}
+
+function clearWorkspace() {
+  clearTimeout(S.saveTimer);
+  clearTimeout(S.compileTimer);
+  S.projects = [];
+  S.slug = null;
+  S.meta = null;
+  S.files = [];
+  S.currentFile = null;
+  S.pdfDoc = null;
+  S.marker = null;
+  S.labelsFor = null;
+  S.dirty = 0;
+  S._renderGen++;
+  S.compileSeq++;
+  S._pageObserver?.disconnect();
+  S._pageObserver = null;
+  $("#project-name").textContent = "未选择项目";
+  $("#project-list").innerHTML = "";
+  $("#file-tree").innerHTML = "";
+  destroyPages();
+  $("#pdf-hint").hidden = false;
+  hidePdfOverlay();
+  applyErrorMarkers([]);
+  if (S.editor) {
+    S.loadingFile = true;
+    S.editor.setValue("");
+    S.loadingFile = false;
+    updateCount();
+  }
+  updateDirtyDot();
+}
+
+function showAuthModal() {
+  const modal = $("#auth-modal");
+  if (!modal) return;
+  if (S.slug || S.currentFile || S.files.length || S.projects.length) clearWorkspace();
+  modal.hidden = false;
+  setAuthUser(null);
+  setTimeout(() => $("#auth-username")?.focus(), 30);
+}
+
+function hideAuthModal() {
+  $("#auth-modal").hidden = true;
+  $("#auth-error").hidden = true;
+}
+
+async function loadAuth() {
+  try {
+    const result = await api("/api/auth/me");
+    if (!result.authenticated) {
+      showAuthModal();
+      return false;
+    }
+    setAuthUser(result.user);
+    return true;
+  } catch (e) {
+    const error = $("#auth-error");
+    error.textContent = "无法连接服务器：" + e.message;
+    error.hidden = false;
+    showAuthModal();
+    return false;
+  }
+}
+
+async function submitAuth(e) {
+  e.preventDefault();
+  if (AUTH.busy) return;
+  const username = $("#auth-username").value.trim();
+  const password = $("#auth-password").value;
+  const confirm = $("#auth-password-confirm").value;
+  const error = $("#auth-error");
+  if (AUTH.mode === "register" && password !== confirm) {
+    error.textContent = "两次输入的密码不一致";
+    error.hidden = false;
+    return;
+  }
+  AUTH.busy = true;
+  const submit = $("#auth-submit");
+  submit.disabled = true;
+  submit.classList.add("loading");
+  error.hidden = true;
+  try {
+    const endpoint = AUTH.mode === "register" ? "/api/auth/register" : "/api/auth/login";
+    const result = await api(endpoint, json("POST", { username, password }));
+    setAuthUser(result.user);
+    hideAuthModal();
+    await loadAiStyles();
+    await loadProjects();
+    toast(AUTH.mode === "register" ? "注册成功" : "登录成功");
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally {
+    AUTH.busy = false;
+    submit.disabled = false;
+    submit.classList.remove("loading");
+  }
+}
+
+async function logout() {
+  if (S.dirty) await saveNow();
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } catch (e) {
+    toast("退出失败: " + e.message);
+    return;
+  }
+  setAuthUser(null);
+  clearWorkspace();
+  showAuthModal();
 }
 
 /* ================= UI 状态持久化 ================= */
@@ -293,6 +437,20 @@ async function loadProjects() {
     $("#project-name").textContent = "未选择项目";
     $("#file-tree").innerHTML = "";
     $("#pdf-hint").hidden = false;
+  }
+}
+
+async function loadAiStyles() {
+  try {
+    const styles = await api("/api/ai/styles");
+    if (!Array.isArray(styles) || !styles.length) return;
+    const sel = $("#ai-style");
+    const cur = sel.value;
+    sel.innerHTML = styles.map((s) =>
+      `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  } catch {
+    // 未配置 AI 或接口暂时不可用不影响编辑器和编译功能。
   }
 }
 
@@ -1222,6 +1380,9 @@ async function aiApply() {
 }
 
 function bindEvents() {
+  $("#auth-form").addEventListener("submit", submitAuth);
+  $("#auth-switch").onclick = () => setAuthMode(AUTH.mode === "login" ? "register" : "login");
+  $("#btn-logout").onclick = logout;
   $("#btn-compile").onclick = compile;
   $("#btn-sync").onclick = forwardSync;
   $("#btn-download").onclick = () => {
@@ -1290,11 +1451,9 @@ function bindEvents() {
     fd.append("file", file);
     fd.append("subdir", "");
     try {
-      const res = await fetch(`/api/projects/${S.slug}/upload`, { method: "POST", body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || res.statusText);
+      const data = await api(`/api/projects/${S.slug}/upload`, { method: "POST", body: fd });
       await refreshFiles();
-      toast(`已上传 ${data.path}`);
+      toast(`已上传 ${data.path}；正文单独一行写图片名即可自动插入`);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -1694,7 +1853,7 @@ function initFallbackEditor() {
 }
 
 /* 按钮绑定 / 数据加载与 Monaco 解耦，确保任何情况下按钮都有响应 */
-function bootstrap() {
+async function bootstrap() {
   const ui = loadUI();
   // 恢复上次的分栏比例 / PDF 缩放 / 滚动同步开关
   if (ui.split) {
@@ -1705,23 +1864,22 @@ function bootstrap() {
   S.pdfScrollSync = ui.syncScroll !== false;
   $("#btn-sync-scroll").classList.toggle("on", S.pdfScrollSync);
 
-  // 恢复上次选择的 AI 排版标准，并与服务端同步可选标准
-  if (ui.aiStyle) $("#ai-style").value = ui.aiStyle;
-  api("/api/ai/styles").then((styles) => {
-    if (!Array.isArray(styles) || !styles.length) return;
-    const sel = $("#ai-style");
-    const cur = sel.value;
-    sel.innerHTML = styles.map((s) =>
-      `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
-    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
-  }).catch(() => {});
-
   initResizer();
   initMobile();
   bindEvents();
-  loadProjects();
-  // 调试/自动化测试钩子
+  setAuthMode("login");
+  // 先设置测试/兜底钩子，避免认证请求较慢时触发第二次 bootstrap。
   window.LW = S;
+  if (!(await loadAuth())) {
+    // 未登录时保留编辑器页面作为背景，但不请求任何用户项目数据。
+    return;
+  }
+
+  // 恢复上次选择的 AI 排版标准，并与服务端同步可选标准
+  if (ui.aiStyle) $("#ai-style").value = ui.aiStyle;
+  loadAiStyles();
+
+  loadProjects();
 }
 
 /* ================= 启动 ================= */

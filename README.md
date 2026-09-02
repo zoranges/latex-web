@@ -1,6 +1,6 @@
 # LaTeX Web
 
-轻量在线 LaTeX 编辑器（单用户），对标 Overleaf 核心编辑+编译体验，不依赖 Docker。
+轻量在线 LaTeX 编辑器，对标 Overleaf 核心编辑+编译体验，不依赖 Docker。
 
 ## 特性
 
@@ -10,7 +10,8 @@
 - **Git 版本历史** — 每次保存自动 commit，可查看 diff 并一键恢复任意版本
 - **AI 排版** — 大模型分析并修正排版，可选标准（通用 / 数模国赛格式）；支持**定位修正**（选中哪段只改哪段）与排版要求指令交互；两阶段：diff 预览确认 → 应用 + 编译自愈，失败自动回滚
 - **数模国赛论文模板** — 参考全国组委会格式规范和公开优秀论文组织方式的电子版论文骨架
-- **文件上传** — 上传图片等资源到项目目录
+- **账号隔离** — 注册/登录后，每个用户只能看到和操作自己的项目、文件、图片及历史记录
+- **文件上传** — 上传图片等资源到当前用户的项目目录；正文中单独一行写 `a.jpg` 即可在编译时自动转为插图
 - **内置模板** — 新建项目时可选 7 种模板（见下）
 - **中文支持** — 使用 ctex/xeCJK + 系统字体，开箱即用
 - **移动端自适应** — 侧栏收为抽屉、编辑/预览标签切换、图标化按钮
@@ -56,6 +57,7 @@ bash run.sh
 |---|---|
 | `PORT` | `8090` |
 | `HOST` | `0.0.0.0` |
+| `SESSION_COOKIE_SECURE` | `0` | HTTPS 部署时设为 `1` |
 
 ## AI 排版
 
@@ -112,6 +114,22 @@ data/
         └── .git/
 ```
 
+首次打开会先注册或登录。升级已有的单用户数据时，首个注册用户会接管原有项目；之后新建的项目按账号隔离。
+
+### 图片引用
+
+点击文件区的上传按钮，把图片上传到当前项目根目录。正文可以使用标准 LaTeX 写法：
+
+```latex
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{a.jpg}
+  \caption{示例图片}
+\end{figure}
+```
+
+如果正文单独一行写图片名，例如 `a.jpg`，编译前会自动转换成宽度为 `0.8\linewidth` 的插图命令；附录 `Verbatim`、`VerbatimInput`、`lstlisting` 等代码环境不会被转换。图片放在子目录时，即使正文只写文件名，编译器也会建立临时查找映射，编译结束后自动清理。
+
 ## 目录结构
 
 ```
@@ -138,6 +156,10 @@ data/
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/templates` | 内置模板列表 |
+| GET | `/api/auth/me` | 当前登录状态 |
+| POST | `/api/auth/register` | 注册并登录 `{username,password}` |
+| POST | `/api/auth/login` | 登录 `{username,password}` |
+| POST | `/api/auth/logout` | 退出登录 |
 | GET/POST | `/api/projects` | 列表 / 创建项目（POST 可传 `template`） |
 | DELETE | `/api/projects/{slug}` | 删除项目 |
 | GET/PUT | `/api/projects/{slug}/file?path=` | 读 / 写文件 |

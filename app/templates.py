@@ -278,7 +278,9 @@ LETTER = r"""\documentclass[UTF8]{ctexart}
 \end{document}
 """
 
-CUMCM = r"""\documentclass[UTF8,zihao=-4]{ctexart}  % 正文小四号宋体
+CUMCM = r"""\documentclass[UTF8,a4paper]{ctexart}
+% 本模板默认面向电子版论文：不包含承诺书和编号专用页。
+% 纸质版打印时请在论文前另附当届官方专用页，电子版不要加入这两页。
 \usepackage[a4paper,top=2.5cm,bottom=2.5cm,left=2.5cm,right=2.5cm]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
@@ -304,72 +306,32 @@ CUMCM = r"""\documentclass[UTF8,zihao=-4]{ctexart}  % 正文小四号宋体
 \renewcommand{\textfraction}{0.05}
 \renewcommand{\floatpagefraction}{0.85}
 
-% 标题：一级四号黑体居中；二/三级小四黑体左对齐
+% 以下是本模板的默认排版样式，仅作参考，不代表全国统一字号要求
 \ctexset{
   section/format      = \centering\heiti\zihao{4},
   subsection/format   = \heiti\zihao{-4},
   subsubsection/format = \heiti\zihao{-4},
 }
 
+% 正文：单倍行距，首行缩进约两个汉字；不设置页眉
+\linespread{1.0}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt}
+
 \begin{document}
 
-% ==================== 第一页：承诺书 ====================
-% 注意：正式提交时请替换为当届官方组委会发布的承诺书原文
-\thispagestyle{empty}
-\begin{center}
-  {\heiti\zihao{3} 全国大学生数学建模竞赛承诺书}\par
-  \vspace{1.5em}
-\end{center}
-
-我们仔细阅读了全国大学生数学建模竞赛的竞赛规则。
-
-我们完全明白，在竞赛开始后，竞赛题将公布在竞赛网站上。
-
-我们承诺：
-
-\begin{enumerate}[label=\arabic*.]
-  \item 我们的参赛队号为：\underline{\hspace{4cm}}；
-  \item 我们的论文是独立完成的，除引用文献外不含他人成果；
-  \item 论文中不出现任何可能显示答题人身份的标志。
-\end{enumerate}
-
-\vfill
-\begin{flushright}
-  参赛队员（签名）：\underline{\hspace{3cm}}、\underline{\hspace{3cm}}、\underline{\hspace{3cm}}\\[1em]
-  \underline{\hspace{3cm}} 年 \underline{\hspace{1.5cm}} 月 \underline{\hspace{1.5cm}} 日
-\end{flushright}
-
-\newpage
-
-% ==================== 第二页：编号专用页 ====================
-\thispagestyle{empty}
-\begin{center}
-  {\heiti\zihao{3} 编号专用页}\par
-  \vspace{2em}
-\end{center}
-
-\begin{center}
-\begin{tabular}{|p{3.5cm}|p{3.5cm}|p{3.5cm}|}
-  \hline
-  赛区评阅编号（由赛区组委会评阅前进行编号）： & & \\
-  \hline
-\end{tabular}
-\vspace{2em}
-
-\begin{tabular}{|p{3.5cm}|p{3.5cm}|p{3.5cm}|}
-  \hline
-  赛区送全国评阅编号（由赛区组委会评阅后进行编号）： & & \\
-  \hline
-\end{tabular}
-\end{center}
-
-\newpage
-
-% ==================== 第三页：题目 + 摘要（页码从 1 开始） ====================
+% ==================== 电子版第一页：题目 + 摘要 ====================
+\pagenumbering{arabic}
 \setcounter{page}{1}
+\pagestyle{plain}
+
+% 纸质版的承诺书和编号专用页请使用当届官方专用页，不能直接使用自制文本。
+% 电子版论文不包含这两页。
+
+% ==================== 摘要页（电子版第一页） ====================
 
 \begin{center}
-  {\heiti\zihao{3} 论文题目（请替换）}\par
+  {\heiti\zihao{3} 论文题目}\par
   \vspace{1em}
 \end{center}
 
@@ -377,26 +339,23 @@ CUMCM = r"""\documentclass[UTF8,zihao=-4]{ctexart}  % 正文小四号宋体
   {\heiti\zihao{4} 摘要}\par
 \end{center}
 
-这里是摘要正文。摘要应是一份简明扼要的详细摘要：说明所研究的问题、
-建立的模型、使用的算法、主要结果与结论。摘要篇幅不超过一页，无需译成英文。
+% 摘要应说明研究问题、建模思路、求解方法、主要结果和结论，控制在一页内。
 
 \vspace{0.8em}
-\noindent{\heiti 关键词：}关键词一；关键词二；关键词三
+\noindent{\heiti 关键词：}
 
 \newpage
 
 % ==================== 正文 ====================
 
 \section{问题重述}
+% 准确重述题目要求，明确需要解决的任务和评价目标。
 
-用自己的语言复述题目要求。
+\section{问题分析}
+% 结合题目背景说明各小问之间的关系、关键变量和主要难点。
 
 \section{模型假设}
-
-\begin{enumerate}[label=（\arabic*）]
-  \item 假设一；
-  \item 假设二。
-\end{enumerate}
+% 只列出确有必要且能够解释的假设，避免堆砌与题目无关的条件。
 
 \section{符号说明}
 
@@ -407,89 +366,71 @@ CUMCM = r"""\documentclass[UTF8,zihao=-4]{ctexart}  % 正文小四号宋体
     \toprule
     序号 & 符号 & 含义 \\
     \midrule
-    1 & $x$ & 决策变量 \\
-    2 & $f(x)$ & 目标函数 \\
+    % 1 & $x$ & 决策变量 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\section{模型的建立与求解}
+\section{模型建立与求解}
 
-\subsection{模型建立}
+\subsection{问题一}
+% 说明问题一的变量、目标函数、约束条件、模型建立和求解过程。
 
-正文为小四号宋体、单倍行距。核心公式必须编号，例如：
-\begin{equation}
-  \min f(x) \quad \text{s.t.} \quad g_i(x) \leq 0,\ i = 1, \ldots, m
-\end{equation}
+\subsection{问题二}
+% 说明问题二的模型、算法、参数设置和结果。按实际小问增删本节。
 
-\subsection{模型求解}
+% \subsection{问题三}
+% \subsection{问题四}
 
-引用公式用~\ref{eq:demo}，引用图表用图~\ref{fig:demo}、表~\ref{tab:demo}。
-引用文献用方括号编号，如~\cite{ref1}。
+\section{结果分析与模型检验}
+% 给出关键结果，说明误差、对比实验、稳定性或敏感性分析。
 
-\begin{equation}\label{eq:demo}
-  \int_0^1 x^2\,\mathrm{d}x = \frac{1}{3}
-\end{equation}
-
-\begin{figure}[htbp]
-  \centering
-  % \includegraphics[width=0.7\linewidth]{figs/example.png}
-  \fbox{\parbox{0.6\linewidth}{\centering\vspace{2em}（此处放置图片）\vspace{2em}}}
-  \caption{示例图题（位于图下方）}
-  \label{fig:demo}
-\end{figure}
-
-% 并排子图示例（需 subcaption；取消注释前请确保图片文件真实存在）：
+% 图片示例（仅在项目中有对应文件时取消注释）：
 % \begin{figure}[htbp]
 %   \centering
-%   \begin{subfigure}{0.45\linewidth}
-%     \centering
-%     \includegraphics[width=\linewidth]{figs/left.png}
-%     \caption{左图}
-%   \end{subfigure}
-%   \hfill
-%   \begin{subfigure}{0.45\linewidth}
-%     \centering
-%     \includegraphics[width=\linewidth]{figs/right.png}
-%     \caption{右图}
-%   \end{subfigure}
-%   \caption{并排子图示例}
-%   \label{fig:subdemo}
+%   \includegraphics[width=0.8\linewidth]{figs/example.png}
+%   \caption{图题}
+%   \label{fig:example}
 % \end{figure}
 
-\begin{table}[htbp]
-  \centering
-  \caption{示例表题（位于表上方）}
-  \label{tab:demo}
-  \begin{tabular}{ccc}
-    \toprule
-    列一 & 列二 & 列三 \\
-    \midrule
-    数据 & 数据 & 数据 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+% 表格示例：
+% \begin{table}[htbp]
+%   \centering
+%   \caption{表题}
+%   \label{tab:example}
+%   \begin{tabular}{ccc}
+%     \toprule
+%     列一 & 列二 & 列三 \\
+%     \midrule
+%     数据 & 数据 & 数据 \\
+%     \bottomrule
+%   \end{tabular}
+% \end{table}
 
 \section{模型评价与推广}
+% 结合结果讨论模型的适用范围、优点、局限和可推广方向。
 
-分析模型的优缺点、灵敏度与改进方向。
+% ==================== AI 工具使用声明 ====================
+% 2026 年起使用 AI 工具时，须根据实际情况填写下列声明，并删除本提示。
+\section*{AI工具使用声明}
+请根据实际使用情况填写本节，并在提交前删除本行。
+% 未使用 AI 时：本参赛队在竞赛过程中未使用任何AI工具。
+% 使用 AI 时：本参赛队在竞赛过程中使用了AI工具，主要用于〖简要用途〗，详细使用情况见支撑材料。
 
 % ==================== 参考文献 ====================
 % 按正文引用次序列出；正文引用处用 [编号]
 \begin{thebibliography}{99}
-  \bibitem{ref1} 作者，书名，出版地：出版社，出版年。
-  \bibitem{ref2} 作者，论文名，杂志名，卷期号：起止页码，出版年。
-  \bibitem{ref3} 作者，资源标题，网址，访问时间（年月日）。
+  % \bibitem{ref1} 按正文首次引用顺序填写参考文献。
 \end{thebibliography}
 
-% ==================== 附录：程序源代码 ====================
+% ==================== 附录 ====================
 \appendix
-\section{程序源代码}
+\section{支撑材料文件列表}
+% 列出支撑材料压缩包中的文件名及用途。若没有支撑材料，请填写：本论文没有支撑材料。
 
-\begin{verbatim}
-# 在此粘贴可运行的程序代码（Python / MATLAB 等）
-print("hello, cumcm")
-\end{verbatim}
+\section{程序源代码}
+% 粘贴完整、可运行的源程序（含 EXCEL、SPSS 等软件的交互命令）。
+% 如果确实没有使用程序，请填写：本论文没有用到程序。
 
 \end{document}
 """
@@ -506,7 +447,7 @@ TEMPLATES: list[dict] = [
     {
         "id": "cumcm",
         "name": "数模国赛论文",
-        "desc": "高教社杯全国大学生数学建模竞赛格式：承诺书/编号页/摘要页 + 三号黑体题目、四号黑体一级标题",
+        "desc": "电子版论文骨架：摘要、正文、结果分析、参考文献和附录；纸质版附页请使用当届官方专用页",
         "main": "main.tex",
         "files": {"main.tex": CUMCM},
     },

@@ -31,6 +31,9 @@ KEY_FILE = BASE_DIR / "data" / "ai_key"
 API_TIMEOUT = 180.0       # 单次模型调用超时（秒）
 MAX_REPAIR_ROUNDS = 2     # 编译失败后最多让 LLM 修复的轮数
 MAX_ANALYZE_CHARS = 100_000  # 超过此长度的文件不做整体分析
+AUTO_FULL_ANALYZE_CHARS = 18_000  # 超过此长度自动分段，避免完整 JSON 被截断
+AUTO_ANALYZE_CHUNK_CHARS = 6_000
+MAX_AUTO_ANALYZE_CHUNKS = 12
 
 
 class AIError(RuntimeError):
@@ -91,10 +94,24 @@ def _is_loopback(base: str) -> bool:
         return False
 
 
+def _max_output_tokens() -> int:
+    try:
+        value = int(os.environ.get("AI_MAX_OUTPUT_TOKENS", "8192"))
+    except ValueError:
+        value = 8192
+    return max(2048, min(value, 65536))
+
+
 async def _chat(messages: list[dict], json_mode: bool = True) -> str:
     base, model = _provider()
     key = resolve_key()
-    body: dict = {"model": model, "messages": messages, "temperature": 0.2}
+    body: dict = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        # 给完整 LaTeX 返回留出空间；长文件还会自动走分段模式。
+        "max_tokens": _max_output_tokens(),
+    }
     if json_mode:
         body["response_format"] = {"type": "json_object"}
     try:
@@ -206,12 +223,43 @@ def _parse_json(raw: str) -> dict:
         if recovered is not None:
             return recovered
         raise AIError(
-            "模型返回的 JSON 不完整或格式错误，可能是输出过长导致接口截断；"
-            f"请改用选区模式分段处理（原错误：{e}）"
+            "模型返回的 JSON 不完整或格式错误，系统已自动尝试续写；"
+            f"请重试，或改用选区模式分段处理（原错误：{e}）"
         )
     if not isinstance(data, dict):
         raise AIError("模型返回的 JSON 不是对象")
     return data
+
+
+async def _chat_json(messages: list[dict]) -> dict:
+    """获取 JSON；若模型在字符串中途截断，追加一次续写后再解析。"""
+    raw = await _chat(messages)
+    try:
+        return _parse_json(raw)
+    except AIError as first_error:
+        # 续写请求不能带 json_object 约束，否则模型往往会重新输出一个完整对象，
+        # 无法接在上一次被截断的字符串后面。
+        continuation_messages = [
+            *messages,
+            {"role": "assistant", "content": raw},
+            {
+                "role": "user",
+                "content": (
+                    "上一条 JSON 回复在字符串中途被截断。请只从刚才的中断位置继续输出，"
+                    "不要重复前文，不要添加解释或代码围栏，并补齐 JSON 的剩余内容。"
+                ),
+            },
+        ]
+        try:
+            tail = await _chat(continuation_messages, json_mode=False)
+        except AIError:
+            raise first_error
+        for candidate in (raw + tail, raw.rstrip() + tail.lstrip(), tail):
+            try:
+                return _parse_json(candidate)
+            except AIError:
+                continue
+        raise first_error
 
 
 # AI 偶尔会把自然段写成“· 内容”或“• 内容”。这些符号不属于论文排版，
@@ -367,6 +415,170 @@ def _validate_selection(content: str, start: int, end: int) -> int:
     return n
 
 
+def _clean_ai_content(data: dict) -> tuple[str, str]:
+    new_content = data.get("content")
+    if not isinstance(new_content, str) or not new_content.strip():
+        raise AIError("模型返回缺少有效的 content 字段")
+    summary = str(data.get("summary") or "").strip() or "（模型未给出说明）"
+    new_content, removed_markers = _remove_ai_line_markers(new_content)
+    return new_content, _append_cleanup_notice(summary, removed_markers)
+
+
+def _split_analyze_ranges(content: str) -> list[tuple[int, int]]:
+    """按近似字符数切分 1 基闭区间，保证所有原始行恰好覆盖一次。"""
+    lines = content.splitlines()
+    if not lines:
+        return []
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    chars = 0
+    for index, line in enumerate(lines):
+        if index > start and chars + len(line) + 1 > AUTO_ANALYZE_CHUNK_CHARS:
+            ranges.append((start + 1, index))
+            start = index
+            chars = 0
+        chars += len(line) + 1
+    ranges.append((start + 1, len(lines)))
+    return ranges
+
+
+def _selection_context(content: str, start: int, end: int, radius: int = 24) -> str:
+    """为自动分段请求保留当前片段及邻近行，避免重复发送整篇长文。"""
+    lines = content.splitlines()
+    left = max(0, start - 1 - radius)
+    right = min(len(lines), end + radius)
+    context = lines[left:right]
+    if left:
+        context.insert(0, "（文件前文已省略）")
+    if right < len(lines):
+        context.append("（文件后文已省略）")
+    return "\n".join(context)
+
+
+async def _analyze_selection_once(
+    path: str,
+    style: str,
+    content: str,
+    file_lines: str,
+    instruction: str,
+    selection: tuple[int, int],
+    context_content: str | None = None,
+) -> dict:
+    start, end = selection
+    _validate_selection(content, start, end)
+    region = "\n".join(content.splitlines()[start - 1 : end])
+    if not region.strip():
+        return {
+            "summary": "选中区域为空，保持原文。",
+            "content": region,
+            "changed": False,
+            "start_line": start,
+            "end_line": end,
+            "original": region,
+        }
+    reference_content = context_content if context_content is not None else content
+    user_msg = (
+        f"文件路径: {path}\n"
+        f"项目目录当前全部文件清单（\\includegraphics 只能引用此清单中的文件，不得编造文件名）:\n"
+        f"{file_lines}\n"
+        f"文件内容（仅供上下文参考，禁止修改选中区域以外的部分，在 <<<LATEX 与 >>>LATEX 之间）:\n"
+        f"<<<LATEX\n{reference_content}\n>>>LATEX\n"
+        f"选中区域：第 {start} 行 ~ 第 {end} 行（在 <<<SELECTED 与 >>>SELECTED 之间）:\n"
+        f"<<<SELECTED\n{region}\n>>>SELECTED\n"
+        f"用户排版要求：{instruction or '（无，按排版标准整理）'}\n"
+        "请按要求输出 JSON。"
+    )
+    data = await _chat_json(
+        [
+            {"role": "system", "content": _analyze_system_selection(style)},
+            {"role": "user", "content": user_msg},
+        ]
+    )
+    new_content, summary = _clean_ai_content(data)
+    replacement = new_content.rstrip("\n")
+    return {
+        "summary": summary,
+        "content": replacement,
+        "diff": _make_diff(region, replacement, f"{path} 第{start}-{end}行"),
+        "changed": replacement.strip() != region.strip(),
+        "start_line": start,
+        "end_line": end,
+        "original": region,
+    }
+
+
+async def _analyze_full_once(
+    path: str, style: str, content: str, file_lines: str, instruction: str
+) -> tuple[str, str]:
+    user_msg = (
+        f"文件路径: {path}\n"
+        f"项目目录当前全部文件清单（\\includegraphics 只能引用此清单中的文件，不得编造文件名）:\n"
+        f"{file_lines}\n"
+        f"文件内容（在 <<<LATEX 与 >>>LATEX 之间）:\n"
+        f"<<<LATEX\n{content}\n>>>LATEX\n"
+        f"用户排版要求：{instruction or '（无，按排版标准整理）'}\n"
+        "请按要求输出 JSON。"
+    )
+    data = await _chat_json(
+        [
+            {"role": "system", "content": _analyze_system(style)},
+            {"role": "user", "content": user_msg},
+        ]
+    )
+    return _clean_ai_content(data)
+
+
+async def _analyze_segmented(
+    path: str,
+    style: str,
+    content: str,
+    file_lines: str,
+    instruction: str,
+) -> dict:
+    ranges = _split_analyze_ranges(content)
+    if len(ranges) > MAX_AUTO_ANALYZE_CHUNKS:
+        raise AIError(
+            f"文件较长，自动分段将超过 {MAX_AUTO_ANALYZE_CHUNKS} 段；"
+            "请改用选区模式分段处理"
+        )
+    original_lines = content.splitlines()
+    merged: list[str] = []
+    summaries: list[str] = []
+    cursor = 0
+    changed = False
+    for start, end in ranges:
+        result = await _analyze_selection_once(
+            path,
+            style,
+            content,
+            file_lines,
+            instruction,
+            (start, end),
+            _selection_context(content, start, end),
+        )
+        merged.extend(original_lines[cursor : start - 1])
+        merged.extend(result["content"].splitlines())
+        cursor = end
+        changed = changed or result["changed"]
+        if result["summary"]:
+            summaries.append(f"第 {start}-{end} 行：{result['summary']}")
+    merged.extend(original_lines[cursor:])
+    new_content = "\n".join(merged)
+    if not new_content.endswith("\n"):
+        new_content += "\n"
+    return {
+        "summary": f"文件较长，已自动分成 {len(ranges)} 段分析。" + "；".join(summaries),
+        "content": new_content,
+        "diff": _make_diff(content, new_content, path),
+        "changed": changed,
+        "style": style,
+        "style_name": get_style(style)["name"],
+        "mode": "full",
+        "segmented": True,
+        "segments": len(ranges),
+    }
+
+
 async def analyze(
     slug: str,
     path: str,
@@ -375,19 +587,14 @@ async def analyze(
     instruction: str = "",
     user_id: int | None = None,
 ) -> dict:
-    """分析排版问题。
-
-    selection 为 None → 全文模式，content = 排版后的完整文件；
-    selection = (start, end)（1 基、闭区间行号）→ 选区模式，
-    content = 选中区域的替换文本。
-    """
+    """分析排版问题；长文件会自动分段，避免完整 JSON 因输出过长而截断。"""
     sty = get_style(style)
     if user_id is None:
         raise AIError("缺少用户身份，无法进行 AI 排版")
     storage.get_project(slug, user_id)  # 校验项目存在且属于当前用户
     content = storage.read_file(slug, path, user_id)
     if len(content) > MAX_ANALYZE_CHARS:
-        raise AIError(f"文件过大（{len(content)} 字符），暂不支持整体分析")
+        raise AIError(f"文件过大（{len(content)} 字符），请改用选区模式分段处理")
     instruction = (instruction or "").strip()
 
     # 注入项目文件清单：模型只能引用真实存在的图片文件，杜绝编造文件名
@@ -398,65 +605,18 @@ async def analyze(
     file_lines = "\n".join(f"  - {f['path']}" for f in files[:200]) or "  （空项目）"
 
     if selection:
-        start, end = selection
-        _validate_selection(content, start, end)
-        region = "\n".join(content.splitlines()[start - 1 : end])
-        system_prompt = _analyze_system_selection(style)
-        user_msg = (
-            f"文件路径: {path}\n"
-            f"项目目录当前全部文件清单（\\includegraphics 只能引用此清单中的文件，不得编造文件名）:\n"
-            f"{file_lines}\n"
-            f"完整文件内容（仅供上下文参考，禁止修改选中区域以外的部分，在 <<<LATEX 与 >>>LATEX 之间）:\n"
-            f"<<<LATEX\n{content}\n>>>LATEX\n"
-            f"选中区域：第 {start} 行 ~ 第 {end} 行（在 <<<SELECTED 与 >>>SELECTED 之间）:\n"
-            f"<<<SELECTED\n{region}\n>>>SELECTED\n"
-            f"用户排版要求：{instruction or '（无，按排版标准整理）'}\n"
-            "请按要求输出 JSON。"
+        result = await _analyze_selection_once(
+            path, style, content, file_lines, instruction, selection
         )
-    else:
-        system_prompt = _analyze_system(style)
-        user_msg = (
-            f"文件路径: {path}\n"
-            f"项目目录当前全部文件清单（\\includegraphics 只能引用此清单中的文件，不得编造文件名）:\n"
-            f"{file_lines}\n"
-            f"文件内容（在 <<<LATEX 与 >>>LATEX 之间）:\n"
-            f"<<<LATEX\n{content}\n>>>LATEX\n"
-            f"用户排版要求：{instruction or '（无，按排版标准整理）'}\n"
-            "请按要求输出 JSON。"
-        )
+        result.update({"style": style, "style_name": sty["name"], "mode": "selection"})
+        return result
 
-    raw = await _chat(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg},
-        ]
+    if len(content) > AUTO_FULL_ANALYZE_CHARS:
+        return await _analyze_segmented(path, style, content, file_lines, instruction)
+
+    new_content, summary = await _analyze_full_once(
+        path, style, content, file_lines, instruction
     )
-    data = _parse_json(raw)
-    new_content = data.get("content")
-    if not isinstance(new_content, str) or not new_content.strip():
-        raise AIError("模型返回缺少有效的 content 字段")
-
-    summary = str(data.get("summary") or "").strip() or "（模型未给出说明）"
-    new_content, removed_markers = _remove_ai_line_markers(new_content)
-    summary = _append_cleanup_notice(summary, removed_markers)
-
-    if selection:
-        start, end = selection
-        original = "\n".join(content.splitlines()[start - 1 : end])
-        replacement = new_content.rstrip("\n")
-        return {
-            "summary": summary,
-            "content": replacement,
-            "diff": _make_diff(original, replacement, f"{path} 第{start}-{end}行"),
-            "changed": replacement.strip() != original.strip(),
-            "style": style,
-            "style_name": sty["name"],
-            "mode": "selection",
-            "start_line": start,
-            "end_line": end,
-            "original": original,
-        }
-
     if not new_content.endswith("\n"):
         new_content += "\n"
     return {

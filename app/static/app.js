@@ -1075,11 +1075,13 @@ async function aiAnalyze() {
   if (!S.slug || !S.currentFile) { toast("请先打开项目中的文件"); return; }
   if (!S.currentFile.endsWith(".tex")) { toast("AI 排版目前仅支持 .tex 文件"); return; }
   if (S.dirty) await saveNow(); // 确保 AI 读到最新内容
+  const style = $("#ai-style").value;
   const btn = $("#btn-ai");
   setBusy(btn, true);
   setStatus("AI 正在分析排版…", "busy");
   try {
-    const r = await api(`/api/projects/${S.slug}/ai/analyze`, json("POST", { path: S.currentFile }));
+    const r = await api(`/api/projects/${S.slug}/ai/analyze`,
+      json("POST", { path: S.currentFile, style }));
     if (!r.changed) {
       setStatus("已分析");
       toast("AI 认为排版已良好：" + r.summary);
@@ -1087,13 +1089,13 @@ async function aiAnalyze() {
     }
     AI.content = r.content;
     AI.path = S.currentFile;
-    $("#ai-summary").textContent = r.summary;
+    $("#ai-summary").textContent = `【${r.style_name || style}】${r.summary}`;
     renderAiDiff(r.diff);
     $("#ai-status").textContent = "";
     $("#ai-status").className = "status";
     $("#btn-ai-apply").disabled = false;
     $("#ai-modal").hidden = false;
-    setStatus("等待确认 AI 排版方案");
+    setStatus(`等待确认 AI 排版方案 · ${r.style_name || style}`);
   } catch (e) {
     setStatus("AI 分析失败: " + e.message, "error");
     toast(e.message);
@@ -1172,6 +1174,7 @@ function bindEvents() {
   $("#ai-modal").onclick = (e) => {
     if (e.target === $("#ai-modal")) closeAiModal();
   };
+  $("#ai-style").onchange = () => saveUI({ aiStyle: $("#ai-style").value });
 
   $("#btn-new-project").onclick = openTemplateModal;
   $("#btn-template-close").onclick = () => ($("#template-modal").hidden = true);
@@ -1628,6 +1631,17 @@ function bootstrap() {
   if (ui.zoom) S.zoom = Math.min(4, Math.max(0.3, ui.zoom));
   S.pdfScrollSync = ui.syncScroll !== false;
   $("#btn-sync-scroll").classList.toggle("on", S.pdfScrollSync);
+
+  // 恢复上次选择的 AI 排版标准，并与服务端同步可选标准
+  if (ui.aiStyle) $("#ai-style").value = ui.aiStyle;
+  api("/api/ai/styles").then((styles) => {
+    if (!Array.isArray(styles) || !styles.length) return;
+    const sel = $("#ai-style");
+    const cur = sel.value;
+    sel.innerHTML = styles.map((s) =>
+      `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  }).catch(() => {});
 
   initResizer();
   initMobile();

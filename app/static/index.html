@@ -47,6 +47,10 @@
     <label class="auto-label"><input type="checkbox" id="auto-compile" checked><span class="lbl">自动编译</span></label>
     <button id="btn-compile" class="btn primary" title="编译 (Ctrl+Enter)"><svg class="icon solid"><use href="#i-play"/></svg><span class="lbl">编译</span></button>
     <button id="btn-ai" class="btn" title="AI 排版：分析并修正当前文件的排版（需配置模型 API Key）"><svg class="icon"><use href="#i-wand"/></svg><span class="lbl">AI排版</span></button>
+    <select id="ai-style" title="AI 排版标准">
+      <option value="general">通用排版</option>
+      <option value="cumcm">数模国赛</option>
+    </select>
     <button id="btn-sync" class="btn" title="把光标所在行定位到 PDF（SyncTeX 正向）"><svg class="icon"><use href="#i-sync"/></svg><span class="lbl">定位</span></button>
     <button id="btn-download" class="btn" title="下载 PDF"><svg class="icon"><use href="#i-download"/></svg><span class="lbl">PDF</span></button>
     <button id="btn-history" class="btn" title="版本历史（每次保存自动记录）"><svg class="icon"><use href="#i-clock"/></svg><span class="lbl">历史</span></button>

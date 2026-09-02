@@ -278,6 +278,198 @@ LETTER = r"""\documentclass[UTF8]{ctexart}
 \end{document}
 """
 
+CUMCM = r"""\documentclass[UTF8,zihao=-4]{ctexart}  % 正文小四号宋体
+\usepackage[a4paper,top=2.5cm,bottom=2.5cm,left=2.5cm,right=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{float}
+
+% 西文使用 Times New Roman（缺少时退回 TeX Gyre Termes）
+\IfFontExistsTF{Times New Roman}%
+  {\setmainfont{Times New Roman}}%
+  {\setmainfont{TeX Gyre Termes}}
+
+% 图表标题：图题小五宋体、位于图下方；表题小五黑体、位于表上方
+\DeclareCaptionFont{wusong}{\zihao{5}}
+\DeclareCaptionFont{wuhei}{\zihao{5}\heiti}
+\captionsetup[figure]{font={wusong},position=below,labelsep=quad}
+\captionsetup[table]{font={wuhei},position=above,labelsep=quad}
+
+% 标题：一级四号黑体居中；二/三级小四黑体左对齐
+\ctexset{
+  section/format      = \centering\heiti\zihao{4},
+  subsection/format   = \heiti\zihao{-4},
+  subsubsection/format = \heiti\zihao{-4},
+}
+
+\begin{document}
+
+% ==================== 第一页：承诺书 ====================
+% 注意：正式提交时请替换为当届官方组委会发布的承诺书原文
+\thispagestyle{empty}
+\begin{center}
+  {\heiti\zihao{3} 全国大学生数学建模竞赛承诺书}\par
+  \vspace{1.5em}
+\end{center}
+
+我们仔细阅读了全国大学生数学建模竞赛的竞赛规则。
+
+我们完全明白，在竞赛开始后，竞赛题将公布在竞赛网站上。
+
+我们承诺：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 我们的参赛队号为：\underline{\hspace{4cm}}；
+  \item 我们的论文是独立完成的，除引用文献外不含他人成果；
+  \item 论文中不出现任何可能显示答题人身份的标志。
+\end{enumerate}
+
+\vfill
+\begin{flushright}
+  参赛队员（签名）：\underline{\hspace{3cm}}、\underline{\hspace{3cm}}、\underline{\hspace{3cm}}\\[1em]
+  \underline{\hspace{3cm}} 年 \underline{\hspace{1.5cm}} 月 \underline{\hspace{1.5cm}} 日
+\end{flushright}
+
+\newpage
+
+% ==================== 第二页：编号专用页 ====================
+\thispagestyle{empty}
+\begin{center}
+  {\heiti\zihao{3} 编号专用页}\par
+  \vspace{2em}
+\end{center}
+
+\begin{center}
+\begin{tabular}{|p{3.5cm}|p{3.5cm}|p{3.5cm}|}
+  \hline
+  赛区评阅编号（由赛区组委会评阅前进行编号）： & & \\
+  \hline
+\end{tabular}
+\vspace{2em}
+
+\begin{tabular}{|p{3.5cm}|p{3.5cm}|p{3.5cm}|}
+  \hline
+  赛区送全国评阅编号（由赛区组委会评阅后进行编号）： & & \\
+  \hline
+\end{tabular}
+\end{center}
+
+\newpage
+
+% ==================== 第三页：题目 + 摘要（页码从 1 开始） ====================
+\setcounter{page}{1}
+
+\begin{center}
+  {\heiti\zihao{3} 论文题目（请替换）}\par
+  \vspace{1em}
+\end{center}
+
+\begin{center}
+  {\heiti\zihao{4} 摘要}\par
+\end{center}
+
+这里是摘要正文。摘要应是一份简明扼要的详细摘要：说明所研究的问题、
+建立的模型、使用的算法、主要结果与结论。摘要篇幅不超过一页，无需译成英文。
+
+\vspace{0.8em}
+\noindent{\heiti 关键词：}关键词一；关键词二；关键词三
+
+\newpage
+
+% ==================== 正文 ====================
+
+\section{问题重述}
+
+用自己的语言复述题目要求。
+
+\section{模型假设}
+
+\begin{enumerate}[label=（\arabic*）]
+  \item 假设一；
+  \item 假设二。
+\end{enumerate}
+
+\section{符号说明}
+
+\begin{table}[htbp]
+  \centering
+  \caption{主要符号说明}
+  \begin{tabular}{cll}
+    \toprule
+    序号 & 符号 & 含义 \\
+    \midrule
+    1 & $x$ & 决策变量 \\
+    2 & $f(x)$ & 目标函数 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{模型的建立与求解}
+
+\subsection{模型建立}
+
+正文为小四号宋体、单倍行距。核心公式必须编号，例如：
+\begin{equation}
+  \min f(x) \quad \text{s.t.} \quad g_i(x) \leq 0,\ i = 1, \ldots, m
+\end{equation}
+
+\subsection{模型求解}
+
+引用公式用~\ref{eq:demo}，引用图表用图~\ref{fig:demo}、表~\ref{tab:demo}。
+引用文献用方括号编号，如~\cite{ref1}。
+
+\begin{equation}\label{eq:demo}
+  \int_0^1 x^2\,\mathrm{d}x = \frac{1}{3}
+\end{equation}
+
+\begin{figure}[htbp]
+  \centering
+  % \includegraphics[width=0.7\linewidth]{figs/example.png}
+  \fbox{\parbox{0.6\linewidth}{\centering\vspace{2em}（此处放置图片）\vspace{2em}}}
+  \caption{示例图题（位于图下方）}
+  \label{fig:demo}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \caption{示例表题（位于表上方）}
+  \label{tab:demo}
+  \begin{tabular}{ccc}
+    \toprule
+    列一 & 列二 & 列三 \\
+    \midrule
+    数据 & 数据 & 数据 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{模型评价与推广}
+
+分析模型的优缺点、灵敏度与改进方向。
+
+% ==================== 参考文献 ====================
+% 按正文引用次序列出；正文引用处用 [编号]
+\begin{thebibliography}{99}
+  \bibitem{ref1} 作者，书名，出版地：出版社，出版年。
+  \bibitem{ref2} 作者，论文名，杂志名，卷期号：起止页码，出版年。
+  \bibitem{ref3} 作者，资源标题，网址，访问时间（年月日）。
+\end{thebibliography}
+
+% ==================== 附录：程序源代码 ====================
+\appendix
+\section{程序源代码}
+
+\begin{verbatim}
+# 在此粘贴可运行的程序代码（Python / MATLAB 等）
+print("hello, cumcm")
+\end{verbatim}
+
+\end{document}
+"""
+
 # id -> 模板定义
 TEMPLATES: list[dict] = [
     {
@@ -286,6 +478,13 @@ TEMPLATES: list[dict] = [
         "desc": "通用中文文章（ctexart），适合日常写作",
         "main": "main.tex",
         "files": {"main.tex": ARTICLE},
+    },
+    {
+        "id": "cumcm",
+        "name": "数模国赛论文",
+        "desc": "高教社杯全国大学生数学建模竞赛格式：承诺书/编号页/摘要页 + 三号黑体题目、四号黑体一级标题",
+        "main": "main.tex",
+        "files": {"main.tex": CUMCM},
     },
     {
         "id": "report",

@@ -78,6 +78,7 @@ class FormatBody(BaseModel):
 
 class AIAnalyzeBody(BaseModel):
     path: str
+    style: str = "general"
 
 
 class AIApplyBody(BaseModel):
@@ -303,11 +304,17 @@ def api_ai_config():
     return ai_mod.describe()
 
 
+@app.get("/api/ai/styles")
+def api_ai_styles():
+    """可选的排版标准列表。"""
+    return [{"id": k, "name": v["name"]} for k, v in ai_mod.STYLES.items()]
+
+
 @app.post("/api/projects/{slug}/ai/analyze")
 async def api_ai_analyze(slug: str, body: AIAnalyzeBody):
     """阶段 1：分析文件排版问题，返回说明 + 新内容 + diff（不写盘）。"""
     try:
-        return await ai_mod.analyze(slug, body.path)
+        return await ai_mod.analyze(slug, body.path, body.style)
     except ai_mod.AIError as e:
         raise HTTPException(400, str(e))
     except ValueError as e:

@@ -131,9 +131,61 @@ def _parse_json(raw: str) -> dict:
     return data
 
 
+# ---------- 排版标准（style profile） ----------
+
+STYLE_GENERAL = "general"
+STYLE_CUMCM = "cumcm"
+
+_CUMCM_RULES = """该文档是全国大学生数学建模竞赛（高教社杯）论文，必须严格按以下官方格式规范排版：
+
+【论文结构】
+1. 第一页为承诺书，第二页为编号专用页（若已有则原样保留，不要改动或增删这两页）；
+2. 论文题目与摘要写在摘要页，其后是正文；页码从题目/摘要页起用阿拉伯数字从 1 连续编号，位于页脚中部。
+
+【字体与版面】
+3. A4 纸，上下左右页边距 2.5cm；
+4. 论文题目：三号黑体、居中；
+5. 一级标题（\\section）：四号黑体、居中、阿拉伯数字编号；
+6. 二级/三级标题（\\subsection/\\subsubsection）：小四号黑体、左端对齐（不居中）；
+7. 正文：小四号宋体，西文 Times New Roman，单倍行距，首行缩进 2 字符；
+8. 不得出现任何可能显示答题人身份的标志（学校名、姓名等），若发现须删除。
+
+【摘要】
+9. 摘要简明扼要且详细，篇幅不超过一页，末尾须有“关键词：”行，无需英文摘要。
+
+【图表与公式】
+10. 图、表必须有标题且编号：图题位于图下方，表题位于表上方；表格用 booktabs 三线表；
+11. 图片用 figure 环境（[htbp] 浮动位置 + \\label），核心公式必须编号（equation/align 环境）；
+12. 正文引用图表用 \\ref。
+
+【参考文献与附录】
+13. 参考文献按正文引用次序列出，正文引用处用方括号编号（如 [1][3]），格式：
+    书籍：[编号] 作者，书名，出版地：出版社，出版年。
+    期刊：[编号] 作者，论文名，杂志名，卷期号：起止页码，出版年。
+    网上资源：[编号] 作者，资源标题，网址，访问时间（年月日）。
+14. 程序源代码放在附录（\\appendix + verbatim）。
+
+【导言区】
+15. 若文件缺少符合竞赛标准的导言区，请补齐：\\documentclass[UTF8,zihao=-4]{ctexart}、
+    geometry 四边 2.5cm、amsmath、amssymb、graphicx、booktabs、caption
+    （图题小五宋体位于图下方、表题小五黑体位于表上方），并用 \\ctexset 设置
+    一级标题四号黑体居中、二三级标题小四黑体左对齐。不要加页眉。"""
+
+STYLES: dict[str, dict] = {
+    STYLE_GENERAL: {"name": "通用排版", "rules": ""},
+    STYLE_CUMCM: {"name": "数模国赛（高教杯）", "rules": _CUMCM_RULES},
+}
+
+
+def get_style(style: str) -> dict:
+    if style not in STYLES:
+        raise AIError(f"未知排版标准: {style}（可选: {', '.join(STYLES)}）")
+    return STYLES[style]
+
+
 # ---------- 阶段 1：分析 ----------
 
-_ANALYZE_SYSTEM = """你是 LaTeX 排版专家。用户会给你一个 LaTeX 源文件，请你对其进行排版整理。
+_ANALYZE_BASE = """你是 LaTeX 排版专家。用户会给你一个 LaTeX 源文件，请你对其进行排版整理。
 
 要求：
 1. 严格保留原文的全部内容与含义：不得删减或概括正文，不得改动公式内容、数据、\\cite/\\ref 的 key。
@@ -145,13 +197,22 @@ _ANALYZE_SYSTEM = """你是 LaTeX 排版专家。用户会给你一个 LaTeX 源
    - 若文件含导言区（\\documentclass），可按需在导言区补充 \\usepackage（如 booktabs、graphicx）
    - 规范缩进与空行
 3. 如果输入是未结构化的纯文本，把它转换为结构良好的 LaTeX；若原文件已有 documentclass，保持原有文档框架。
-4. 如果排版已经很好，content 原样返回并在 summary 中说明。
-5. 必须输出严格 JSON（不要任何额外文字）：
+4. 如果排版已经很好，content 原样返回并在 summary 中说明。"""
+
+_ANALYZE_OUTPUT = """
+必须输出严格 JSON（不要任何额外文字）：
    {"summary": "排版改动的中文说明", "content": "排版后的完整文件内容（不得省略任何部分）"}"""
 
 
-async def analyze(slug: str, path: str) -> dict:
-    """分析单个文件的排版问题，返回 {summary, content, diff, changed}。"""
+def _analyze_system(style: str) -> str:
+    rules = get_style(style)["rules"]
+    block = f"\n\n【排版标准：{get_style(style)['name']}】\n{rules}" if rules else ""
+    return _ANALYZE_BASE + block + "\n" + _ANALYZE_OUTPUT
+
+
+async def analyze(slug: str, path: str, style: str = STYLE_GENERAL) -> dict:
+    """分析单个文件的排版问题，返回 {summary, content, diff, changed, style}。"""
+    sty = get_style(style)
     storage.get_project(slug)  # 校验项目存在
     content = storage.read_file(slug, path)
     if len(content) > MAX_ANALYZE_CHARS:
@@ -165,7 +226,7 @@ async def analyze(slug: str, path: str) -> dict:
     )
     raw = await _chat(
         [
-            {"role": "system", "content": _ANALYZE_SYSTEM},
+            {"role": "system", "content": _analyze_system(style)},
             {"role": "user", "content": user_msg},
         ]
     )
@@ -183,6 +244,8 @@ async def analyze(slug: str, path: str) -> dict:
         "content": new_content,
         "diff": _make_diff(content, new_content, path),
         "changed": changed,
+        "style": style,
+        "style_name": sty["name"],
     }
 
 

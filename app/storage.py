@@ -248,6 +248,10 @@ def write_file(slug: str, path: str, content: str) -> None:
     proj = _proj_dir(slug)
     p = _safe(proj, path)
     p.parent.mkdir(parents=True, exist_ok=True)
+    # 浏览器或外部编辑器复制长文本时，偶尔会把换行写成垂直制表符/换页符。
+    # 这两类控制字符会被 XeLaTeX 当成非法字符，统一恢复为普通换行。
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    content = content.replace("\x0b", "\n").replace("\x0c", "\n")
     p.write_text(content, encoding="utf-8")
     _commit(proj, f"更新 {path}")
 

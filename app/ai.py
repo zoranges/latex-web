@@ -120,8 +120,81 @@ async def _chat(messages: list[dict], json_mode: bool = True) -> str:
         raise AIError(f"AI 服务返回格式异常: {e}")
 
 
+def _decode_jsonish_fragment(fragment: str) -> str:
+    """解码常见的 JSON 非严格字符串，保留 LaTeX 中的反斜杠。"""
+    escaped: list[str] = []
+    i = 0
+    while i < len(fragment):
+        ch = fragment[i]
+        if ch == "\\":
+            if i + 1 < len(fragment) and fragment[i + 1] in '"\\/bfnrt':
+                escaped.append(ch + fragment[i + 1])
+                i += 2
+                continue
+            if (
+                i + 5 < len(fragment)
+                and fragment[i + 1] == "u"
+                and re.fullmatch(r"[0-9a-fA-F]{4}", fragment[i + 2 : i + 6])
+            ):
+                escaped.append(fragment[i : i + 6])
+                i += 6
+                continue
+            # 模型有时把 LaTeX 的 \section 当成 JSON 转义，补一层反斜杠。
+            escaped.append("\\\\")
+            i += 1
+            continue
+        if ch == '"':
+            escaped.append('\\"')
+        elif ch == "\n":
+            escaped.append("\\n")
+        elif ch == "\r":
+            escaped.append("\\r")
+        elif ch == "\t":
+            escaped.append("\\t")
+        elif ord(ch) < 0x20:
+            escaped.append(f"\\u{ord(ch):04x}")
+        else:
+            escaped.append(ch)
+        i += 1
+    return json.loads('"' + "".join(escaped) + '"')
+
+
+def _recover_json_object(text: str) -> dict | None:
+    """恢复含原始换行或 LaTeX 反斜杠的两字段 JSON。"""
+    content_key = re.search(r'"content"\s*:\s*"', text)
+    if not content_key:
+        return None
+
+    # content 按约定是最后一个字段，取对象结束花括号前的最后一个引号。
+    object_end = text.rfind("}")
+    if object_end <= content_key.end():
+        return None
+    content_end = text.rfind('"', content_key.end(), object_end)
+    if content_end < content_key.end():
+        return None
+
+    try:
+        content = _decode_jsonish_fragment(text[content_key.end() : content_end])
+    except (TypeError, ValueError):
+        return None
+
+    summary = ""
+    summary_key = re.search(r'"summary"\s*:\s*"', text)
+    if summary_key and summary_key.end() < content_key.start():
+        # summary 比 content 短，取 content 键之前的最后一个引号。
+        summary_end = text.rfind('"', summary_key.end(), content_key.start())
+        if summary_end >= summary_key.end():
+            try:
+                summary = _decode_jsonish_fragment(
+                    text[summary_key.end() : summary_end]
+                )
+            except (TypeError, ValueError):
+                summary = ""
+    return {"summary": summary, "content": content}
+
+
 def _parse_json(raw: str) -> dict:
-    """解析模型返回的 JSON，容忍 ```json 围栏。"""
+    """解析模型返回的 JSON，容忍代码围栏及常见的非严格 JSON。"""
     text = raw.strip()
     m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
     if m:
@@ -129,7 +202,13 @@ def _parse_json(raw: str) -> dict:
     try:
         data = json.loads(text)
     except ValueError as e:
-        raise AIError(f"模型未返回合法 JSON: {e}")
+        recovered = _recover_json_object(text)
+        if recovered is not None:
+            return recovered
+        raise AIError(
+            "模型返回的 JSON 不完整或格式错误，可能是输出过长导致接口截断；"
+            f"请改用选区模式分段处理（原错误：{e}）"
+        )
     if not isinstance(data, dict):
         raise AIError("模型返回的 JSON 不是对象")
     return data
@@ -227,6 +306,7 @@ _ANALYZE_BASE = """你是 LaTeX 排版专家。用户会给你一个 LaTeX 源�
    - 图片使用 figure 环境，带 [htbp] 浮动位置、\\caption 与 \\label；
      \\includegraphics 必须带宽度约束（如 width=0.8\\linewidth），禁止超出文本宽度
    - 章节层级使用 \\section/\\subsection 等合理划分
+   - Python、R、MATLAB 等程序只能放在附录的代码环境中（如 Verbatim/VerbatimInput 或 listings），或作为项目中的独立支撑材料；禁止把原始程序直接写进普通正文或数学环境
    - 若文件含导言区（\\documentclass），可按需在导言区补充 \\usepackage（如 booktabs、graphicx）
    - 规范缩进与空行
 3. 如果输入是未结构化的纯文本，把它转换为结构良好的 LaTeX；若原文件已有 documentclass，保持原有文档框架。
@@ -403,7 +483,7 @@ _REPAIR_SYSTEM = """你是 LaTeX 编译错误修复专家。用户给你一份�
 要求：
 1. 只修编译错误，不要改动内容与排版风格。
 2. 常见问题：缺少 \\usepackage、环境未闭合、$ 不配对、特殊字符未转义（& % # _ 等）、
-   缺少 \\begin{document}/\\end{document}、图片文件不存在（可注释掉该 figure）。
+   缺少 \\begin{document}/\\end{document}、图片文件不存在（可注释掉该 figure）。如果发现裸露的 Python、R、MATLAB 等程序，必须将其放入 Verbatim/VerbatimInput 或 listings 环境，不能当作普通 LaTeX 正文解析。
 3. 不要新增公式边框或底色（如 \\boxed、\\fbox、\\framebox、\\colorbox），也不要用“·”代替自然分段。
 4. 必须输出严格 JSON：{"analysis": "错误原因与修复方法的中文说明", "content": "修复后的完整文件内容"}"""
 

@@ -289,6 +289,7 @@ CUMCM = r"""\documentclass[UTF8,a4paper]{ctexart}
 \usepackage{subcaption}   % 并排子图：\begin{subfigure}...\end{subfigure}
 \usepackage{enumitem}
 \usepackage{float}        % 提供 [H]：图片精确定位
+\usepackage{fvextra}      % 附录代码：Verbatim/VerbatimInput，避免特殊字符破坏编译
 
 % 西文使用 Times New Roman（缺少时退回 TeX Gyre Termes）
 \IfFontExistsTF{Times New Roman}%
@@ -432,7 +433,13 @@ CUMCM = r"""\documentclass[UTF8,a4paper]{ctexart}
 % 列出支撑材料压缩包中的文件名及用途。若没有支撑材料，请填写：本论文没有支撑材料。
 
 \section{程序源代码}
-% 粘贴完整、可运行的源程序（含 EXCEL、SPSS 等软件的交互命令）。
+% 程序应完整、可运行，含 EXCEL、SPSS 等软件的交互命令。
+% 推荐将代码文件上传到项目（例如 code/model.py），再取消下一行注释：
+% \VerbatimInput[breaklines=true,breakanywhere=true,fontsize=\small]{code/model.py}
+% 如果直接粘贴代码，必须放在 Verbatim 环境中，不能裸写在正文：
+% \begin{Verbatim}[breaklines=true,breakanywhere=true,fontsize=\small]
+% 在这里粘贴完整程序
+% \end{Verbatim}
 % 如果确实没有使用程序，请填写：本论文没有用到程序。
 
 \end{document}
